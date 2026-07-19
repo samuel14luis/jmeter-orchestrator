@@ -53,10 +53,10 @@ public final class Dtos {
     public record PresetLaunchRequest(Map<String, Object> overrides) {
     }
 
-    public record ExecutionNodeDto(Long id, Integer nodeIndex, String podName, String status,
-                                   Integer exitCode, String jtlPath, String logPath) {
+    public record ExecutionNodeDto(Long id, Integer nodeIndex, String podName, String workerId,
+                                   String status, Integer exitCode, String jtlPath, String logPath) {
         public static ExecutionNodeDto of(ExecutionNode n) {
-            return new ExecutionNodeDto(n.id, n.nodeIndex, n.podName, n.status.name(),
+            return new ExecutionNodeDto(n.id, n.nodeIndex, n.podName, n.workerId, n.status.name(),
                     n.exitCode, n.jtlPath, n.logPath);
         }
     }

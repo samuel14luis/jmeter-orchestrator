@@ -546,9 +546,12 @@ async function loadPresets() {
         <td class="mono" style="font-size:.75rem">${esc(JSON.stringify(p.parameters||{}))}</td>
         <td class="actions">
           <button class="sm" onclick="launchPreset(${p.id},this)">Lanzar</button>
+          <button class="ghost sm" onclick="editPreset(${p.id})">Editar</button>
           <button class="ghost sm" onclick="delPreset(${p.id})">🗑</button>
-        </td></tr>`).join('')
+        </td></tr>
+        <tr id="prow-${p.id}" style="display:none"><td colspan="5"></td></tr>`).join('')
     }</tbody></table>`;
+    presetCacheP = list;
   } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
 }
 $('#p-create').addEventListener('click', async () => {
@@ -578,9 +581,56 @@ async function launchPreset(id, btn) {
     switchTo('executions'); streamExecution(e.id);
   } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
 }
+let presetCacheP = [];
+function editPreset(id) {
+  const row = $('#prow-' + id);
+  if (row.style.display === '') { row.style.display = 'none'; return; }
+  row.style.display = '';
+  const p = presetCacheP.find(x => x.id === id) || {};
+  const pr = p.parameters || {};
+  row.firstElementChild.innerHTML = `
+    <div class="row2" style="grid-template-columns:1fr 1fr">
+      <div class="field"><label>Nombre</label><input id="pe-name-${id}" value="${esc(p.name||'')}"></div>
+      <div class="field"><label>Tipo</label>
+        <select id="pe-type-${id}">
+          ${['CARGA','ESTRES','PICO','RESISTENCIA'].map(t=>`<option${t===p.testType?' selected':''}>${t}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Hilos</label><input id="pe-threads-${id}" type="number" value="${pr.threads??10}"></div>
+      <div class="field"><label>Nodos</label><input id="pe-nodes-${id}" type="number" value="${pr.nodes??1}"></div>
+      <div class="field"><label>Ramp-up (s)</label><input id="pe-ramp-${id}" type="number" value="${pr.rampUp??30}"></div>
+      <div class="field"><label>Duración (s)</label><input id="pe-dur-${id}" type="number" value="${pr.duration??300}"></div>
+    </div>
+    <div class="row2" style="grid-template-columns:2fr 1fr">
+      <div class="field"><label>Host destino</label><input id="pe-host-${id}" value="${esc(pr.targetHost||'')}"></div>
+      <div class="field"><label>Entorno</label><input id="pe-env-${id}" value="${esc(p.targetEnv||'')}"></div>
+    </div>
+    <div class="actions" style="justify-content:flex-end">
+      <button class="ghost sm" onclick="$('#prow-${id}').style.display='none'">Cancelar</button>
+      <button class="sm" onclick="savePreset(${id},this)">Guardar cambios</button>
+    </div>`;
+}
+async function savePreset(id, btn) {
+  btn.disabled = true;
+  const g = k => $(`#pe-${k}-${id}`).value;
+  const body = {
+    name: g('name'), testType: g('type'), targetEnv: g('env') || null,
+    parameters: {
+      threads: Number(g('threads')), nodes: Number(g('nodes')),
+      rampUp: Number(g('ramp')), duration: Number(g('dur')), targetHost: g('host') || null
+    }
+  };
+  try {
+    await req('/api/presets/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Preset actualizado', 'ok'); loadPresets();
+  } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; }
+}
 async function delPreset(id) {
+  const p = presetCacheP.find(x => x.id === id);
+  if (!confirm(`¿Eliminar el preset "${p ? p.name : id}"? Las ejecuciones que lo usaron se conservan (quedan sin preset asociado).`)) return;
   try { await req('/api/presets/' + id, { method: 'DELETE' }); toast('Preset eliminado', 'ok'); loadPresets(); }
-  catch (e) { toast(e.message, 'err'); }
+  catch (e) { toast('No se pudo eliminar: ' + e.message, 'err'); }
 }
 $('#p-refresh').addEventListener('click', () => { loadScriptsInto('#p-script'); loadPresets(); });
 
@@ -643,17 +693,29 @@ async function showExec(id) {
   row.firstElementChild.innerHTML = '<span class="muted">Cargando…</span>';
   try {
     const e = await req('/api/executions/' + id);
+    const s = e.summary || {};
+    const hasSummary = Object.keys(s).length > 0;
+    const tile = (k, v, cls='') => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    const summaryHtml = hasSummary ? `
+      <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+        ${tile('TPS', s.tps ?? '—', 'run')}
+        ${tile('p95', (s.p95 ?? '—') + ' ms')}
+        ${tile('Error %', (s.errorPct ?? '—'), (s.errorPct > 0 ? 'err' : 'ok'))}
+        ${tile('Muestras', s.samples ?? '—')}
+        ${tile('Media', (s.avgMs ?? '—') + ' ms')}
+        ${tile('p99', (s.p99 ?? '—') + ' ms')}
+      </div>` : '<div class="muted" style="font-size:.82rem">Sin resumen todavía</div>';
     row.firstElementChild.innerHTML = `
-      <div class="row2" style="grid-template-columns:1fr 1fr">
-        <div><b>Parámetros</b><pre class="mono" style="background:var(--panel2);padding:.5rem;border-radius:6px;overflow:auto">${esc(JSON.stringify(e.parameters||{},null,2))}</pre></div>
-        <div><b>Resumen métricas</b><pre class="mono" style="background:var(--panel2);padding:.5rem;border-radius:6px;overflow:auto">${esc(JSON.stringify(e.summary||{},null,2))}</pre></div>
-      </div>
-      ${e.nodesDetail && e.nodesDetail.length ? `<b>Nodos</b><table><thead><tr><th>idx</th><th>pod</th><th>estado</th><th>exit</th></tr></thead><tbody>${
-        e.nodesDetail.map(n => `<tr><td>${n.nodeIndex}</td><td class="mono">${esc(n.podName||'—')}</td><td>${st(n.status)}</td><td>${n.exitCode ?? '—'}</td></tr>`).join('')
+      <div style="margin-bottom:.6rem"><b>Resumen de métricas</b>${summaryHtml}</div>
+      <details class="result"><summary class="muted">Parámetros de la ejecución</summary>
+        <pre class="mono">${esc(JSON.stringify(e.parameters||{},null,2))}</pre></details>
+      ${e.nodesDetail && e.nodesDetail.length ? `<b>Shards</b><table><thead><tr><th>idx</th><th>worker</th><th>estado</th><th>exit</th></tr></thead><tbody>${
+        e.nodesDetail.map(n => `<tr><td>${n.nodeIndex}</td><td class="mono">${esc(n.workerId||n.podName||'—')}</td><td>${st(n.status)}</td><td>${n.exitCode ?? '—'}</td></tr>`).join('')
       }</tbody></table>` : ''}`;
   } catch (err) { row.firstElementChild.innerHTML = `<span class="muted">Error: ${esc(err.message)}</span>`; }
 }
 async function cancelExec(id) {
+  if (!confirm(`¿Cancelar la ejecución #${id}? Los shards en curso se detienen.`)) return;
   try { await req('/api/executions/' + id + '/cancel', { method: 'POST' }); toast('Cancelación solicitada', 'ok'); loadExecutions(); }
   catch (e) { toast(e.message, 'err'); }
 }

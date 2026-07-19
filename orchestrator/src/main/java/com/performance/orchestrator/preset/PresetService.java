@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.performance.orchestrator.common.ApiException;
+import com.performance.orchestrator.domain.Execution;
 import com.performance.orchestrator.domain.Preset;
 import com.performance.orchestrator.domain.Script;
 import com.performance.orchestrator.domain.TestType;
@@ -67,8 +68,13 @@ public class PresetService {
 
     @Transactional
     public void delete(Long id) {
-        if (!Preset.deleteById(id)) {
+        if (Preset.findById(id) == null) {
             throw ApiException.notFound("Preset no encontrado: " + id);
         }
+        // Las ejecuciones referencian el preset (FK_execution_preset). Antes de borrar,
+        // desligamos esas ejecuciones poniendo su preset_id a NULL: conservan sus
+        // parametros efectivos, asi el historial no se pierde y la FK no bloquea el borrado.
+        Execution.update("presetId = null where presetId = ?1", id);
+        Preset.deleteById(id);
     }
 }
