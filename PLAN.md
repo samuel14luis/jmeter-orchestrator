@@ -361,13 +361,19 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
 - [ ] Prueba de resiliencia del propio orquestador (reinicio a mitad de ejecución → reconciliación)
 - [ ] Registrar `workerImage` en `Execution` (reproducibilidad de relanzamientos)
 
-### Fase 7 — Pivote a worker-pool por pull (plataforma de microservicios) — PENDIENTE, P1
+### Fase 7 — Pivote a worker-pool por pull (plataforma de microservicios) — EN CURSO, P1
+- [x] Endpoints internos en el orquestador (`/internal/*`): claim atómico de shards,
+      heartbeat, recepción de resultados (multipart gzip), descarga de script por
+      versionId, autenticados por token de servicio (`WorkerAuthFilter`)
+- [x] Motor `WorkerPoolService`: shards en BD, claim optimista (guardado por
+      `status=PENDING`), start-gate común, reparto de hilos server-side, timeout de
+      shard huérfano y de ejecución sin workers (reaper `@Scheduled`), agregación al
+      recibir el último shard, cancelación propagada vía heartbeat. Flag
+      `orchestrator.engine=jobs|pool` (default pool); reconciler y cancel adaptados.
+      Migración Flyway V2. **Verificado end-to-end simulando workers** (RPS suma
+      3+3=6, reparto 10/3→4,3,3, cancelación por heartbeat).
 - [ ] Agente worker (en la imagen del worker): bucle claim → espera del start-gate →
       `jmeter -n` → heartbeat → subida de `jtl.gz` + log → volver al bucle
-- [ ] Endpoints internos en el orquestador: claim atómico de shards, heartbeat,
-      recepción de resultados (multipart gzip), autenticados por token de servicio
-- [ ] Adaptar el motor: shards en BD, start-gate, timeout de shard huérfano,
-      agregación al recibir el último shard, cancelación propagada vía heartbeat
 - [ ] Manifiestos: Deployment `worker` (N réplicas) + Deployment `orchestrator`
       (1 réplica); retirar el RBAC de Jobs
 - [ ] Retirar `KubernetesJobService`/Fabric8 y el `entrypoint.sh` basado en
@@ -378,6 +384,8 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
 
 **Criterio:** una prueba de N shards corre completa sobre el worker-pool sin tocar el
 API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resumen.
+El **backend del protocolo está hecho y verificado**; falta el agente worker real
+(imagen), los manifiestos, retirar Fabric8 y la validación con carga real en minikube.
 
 ### Fase 8 — Monitoreo sintético programado (≈1–2 semanas, tras Fase 7) — PENDIENTE, P1
 - [ ] Entidades `Schedule` y `ScheduleRun` + migración Flyway
