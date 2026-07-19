@@ -32,8 +32,8 @@ Decisiones cerradas con el usuario:
    nació evitando (SPOF, elección de líder, direccionamiento pod-a-pod).
 3. **Resultados por HTTP**: cada worker sube su JTL comprimido y su log al orquestador
    al terminar su shard. Sin volumen compartido entre microservicios.
-4. **El motor de K8s Jobs (Fabric8) se retira** al completar el worker-pool: una sola
-   arquitectura, y minikube valida exactamente la topología productiva.
+4. **El motor de K8s Jobs (Fabric8) se retiró** al validar el worker-pool (2026-07-19):
+   una sola arquitectura, y minikube valida exactamente la topología productiva.
 5. **Nueva feature — monitoreo sintético programado** (Fase 8): Schedules con cron
    (p. ej. cada hora) que ejecutan un preset ligero por servicio y producen un reporte
    consolidado de estado, con aviso por webhook HTTP + historial en la UI.
@@ -148,9 +148,8 @@ de coordinación es la BD del orquestador, que ya es el estado de verdad del sis
 6. Cada worker sube su `.jtl.gz` + log por HTTP al terminar su shard.
 7. Con todos los shards entregados (o vencidos por timeout), el agregador fusiona los JTL, calcula el resumen (TPS, p90/p95/p99, % error) y cierra como `COMPLETED` o `FAILED`.
 
-> Hasta completar la Fase 7, el motor vigente es el de K8s Jobs *Indexed* (Fabric8):
-> mismo sharding, pero los pods los crea un Job y los resultados van por PVC compartido.
-> Se retira al validar el worker-pool en minikube.
+> Este es el único motor de ejecución. El motor legado de K8s Jobs *Indexed* (Fabric8)
+> se retiró tras validar el worker-pool en minikube (2026-07-19).
 
 ## 5. Stack técnico
 
@@ -159,7 +158,7 @@ de coordinación es la BD del orquestador, que ya es el estado de verdad del sis
 | Runtime | Quarkus 3 LTS + JDK 21 | Virtual threads (`@RunOnVirtualThread`) para las llamadas bloqueantes (BD, almacenamiento, agregación) |
 | API | `quarkus-rest` + SmallRye OpenAPI | SSE para progreso en vivo |
 | Persistencia | Hibernate ORM Panache + SQL Server + Flyway (T-SQL) | Metadatos y resúmenes; parámetros JSON en `NVARCHAR(MAX)` + `CHECK (ISJSON()=1)` |
-| Ejecución distribuida | Worker service (N réplicas) con agente pull + `jmeter -n` | Motor K8s Jobs (Fabric8) vigente solo hasta completar la Fase 7 |
+| Ejecución distribuida | Worker service (N réplicas) con agente pull + `jmeter -n` | Coordinación por pull; sin API de Kubernetes en runtime (Fabric8 retirado) |
 | Artefactos | Almacén propio del orquestador (volumen local) | Los workers entregan JTL/log por HTTP; sin volumen compartido entre servicios |
 | Workers | Imagen propia: agente (claim/heartbeat/upload) + JMeter 5.6.x | Plugins comunes (Ultimate Thread Group, etc.) preinstalados |
 | Métricas | Progreso en vivo por SSE · métricas finales desde los JTL agregados | Grafana/InfluxDB/Prometheus: **solo demo local**; prohibido en producción |
@@ -361,7 +360,7 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
 - [ ] Prueba de resiliencia del propio orquestador (reinicio a mitad de ejecución → reconciliación)
 - [ ] Registrar `workerImage` en `Execution` (reproducibilidad de relanzamientos)
 
-### Fase 7 — Pivote a worker-pool por pull (plataforma de microservicios) — EN CURSO, P1
+### Fase 7 — Pivote a worker-pool por pull (plataforma de microservicios) — HECHA, P1
 - [x] Endpoints internos en el orquestador (`/internal/*`): claim atómico de shards,
       heartbeat, recepción de resultados (multipart gzip), descarga de script por
       versionId, autenticados por token de servicio (`WorkerAuthFilter`)
@@ -374,19 +373,21 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
       3+3=6, reparto 10/3→4,3,3, cancelación por heartbeat).
 - [x] Agente worker (`worker/agent.sh`): bucle claim → descarga del script por HTTP →
       espera del start-gate → `jmeter -n` → heartbeat (aborta si cancelada) → subida de
-      `jtl.gz` + log → volver al bucle. Dispatcher `run.sh` (pull si `ORCHESTRATOR_URL`,
-      si no el entrypoint legado de Jobs); Dockerfile con `jq`. **Verificado end-to-end
-      con dos agentes reales contra el backend vivo** (JMeter stubbeado): claims de shard
-      distintos, start-gate sincronizado, cierre COMPLETED con samples 4+4=8.
-- [x] Imagen del worker construida y validada (`docker build`, 440MB): `jq` + los tres
-      scripts + `jmeter`, shebang LF, ENTRYPOINT `/run.sh`.
+      `jtl.gz` + log → volver al bucle. Dockerfile con `jq`, ENTRYPOINT `/agent.sh`.
+      **Verificado end-to-end con dos agentes reales contra el backend vivo** (JMeter
+      stubbeado): claims de shard distintos, start-gate sincronizado, samples 4+4=8.
+- [x] Imagen del worker construida y validada (`docker build`, 440MB): `jq` + `agent.sh`
+      + `jmeter`, shebang LF, ENTRYPOINT `/agent.sh`.
 - [x] Manifiestos de la topología pool (`deploy/pool/`): namespace `jmeter-load` +
       quota, orchestrator (1 réplica, PVC propio RWO, **sin ServiceAccount/RBAC de
       Jobs**, engine=pool, token), jmeter-worker (N réplicas, `ORCHESTRATOR_URL` +
       token, sin volumen), Service + README. Validados (estructura YAML). El RBAC de
       Jobs simplemente no existe en este set.
-- [ ] Retirar `KubernetesJobService`/Fabric8 y el `entrypoint.sh` basado en
-      `JOB_COMPLETION_INDEX` (+ manifiestos legado `deploy/0X-*`) cuando el pool esté validado
+- [x] Retirado `KubernetesJobService`/Fabric8, la dependencia `quarkus-kubernetes-client`,
+      el `entrypoint.sh` de Jobs, el flag `orchestrator.engine` y los manifiestos legado
+      (`deploy/0X-*`, `local-minikube-orchestrator.yaml`). Motor pool único; recompila,
+      pasa el test unitario y **re-validado en minikube** (nodes=2: 106318+109500=215818,
+      suma exacta, 0 errores).
 - [x] **Validación en minikube con carga JMeter real (2026-07-19)**: desplegado el pool
       (orchestrator 1 réplica + 2 workers, ns `jmeter-load`, DB en el host) y lanzada una
       prueba `nodes=2` contra `target-api`. Resultado **COMPLETED, 0 errores, tps agregado
@@ -396,8 +397,8 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
 
 **Criterio:** una prueba de N shards corre completa sobre el worker-pool sin tocar el
 API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resumen. ✅
-**Cumplido y verificado end-to-end en minikube con JMeter real.** Solo queda retirar el
-motor legado de Jobs/Fabric8 (siguiente paso).
+**Fase 7 COMPLETA:** cumplida y verificada end-to-end en minikube con JMeter real, y el
+motor legado de Jobs/Fabric8 retirado (el pool sigue sumando RPS exacto sin él).
 
 ### Fase 8 — Monitoreo sintético programado (≈1–2 semanas, tras Fase 7) — PENDIENTE, P1
 - [ ] Entidades `Schedule` y `ScheduleRun` + migración Flyway
@@ -457,12 +458,13 @@ jmeter-orchestrator/
 ├── orchestrator/                # Servicio Quarkus (JDK 21)
 │   ├── src/main/java/.../rest/      # Recursos REST + SSE
 │   ├── src/main/java/.../domain/    # Entidades Panache, servicios
-│   ├── src/main/java/.../k8s/       # Fabric8/Jobs (se retira al completar la Fase 7)
+│   ├── src/main/java/.../worker/    # Motor worker-pool: WorkerPoolService + API interna
 │   ├── src/main/java/.../results/   # Fusión de JTL, reporte, resumen
 │   ├── src/main/java/.../storage/   # Almacén local de artefactos del orquestador
 │   └── src/main/resources/db/migration/   # Flyway
-├── worker/                      # Dockerfile JMeter + agente pull (Fase 7; hoy entrypoint.sh de Jobs)
-├── deploy/                      # Manifiestos (orquestador, workers; monitoring/ = SOLO demo local)
+├── worker/                      # Dockerfile JMeter + agente pull (agent.sh)
+├── deploy/pool/                 # Topología worker-pool (orquestador + workers)
+├── deploy/                      # monitoring/ y target-api/ = SOLO demo local
 ├── scripts-plantilla/           # .jmx base parametrizado con __P()
 └── docs/                        # Este plan, convenciones, runbooks
 ```

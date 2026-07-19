@@ -37,11 +37,9 @@ RUN set -eux; \
 # Ajuste de memoria por defecto (se recomienda mas pods con menos hilos, seccion 12)
 ENV JVM_ARGS="-Xms512m -Xmx1536m"
 
-# Dispatcher (run.sh) + agente pull (agent.sh, Fase 7) + entrypoint legado de Jobs.
-# El dispatcher usa el agente si ORCHESTRATOR_URL esta definido; si no, el modo Jobs.
-COPY entrypoint.sh /entrypoint.sh
+# Agente pull del worker-pool (Fase 7): reclama shards, ejecuta jmeter -n y sube
+# resultados por HTTP. Requiere ORCHESTRATOR_URL y WORKER_TOKEN (ver deploy/pool/).
 COPY agent.sh /agent.sh
-COPY run.sh /run.sh
-RUN chmod +x /entrypoint.sh /agent.sh /run.sh
+RUN chmod +x /agent.sh
 
-ENTRYPOINT ["/run.sh"]
+ENTRYPOINT ["/agent.sh"]

@@ -48,9 +48,6 @@ public class WorkerPoolService {
     @Inject
     StorageService storage;
 
-    @ConfigProperty(name = "orchestrator.engine", defaultValue = "jobs")
-    String engine;
-
     /** Segundos de margen desde que se reclama el ultimo shard hasta el arranque comun. */
     @ConfigProperty(name = "orchestrator.pool.start-delay-seconds", defaultValue = "3")
     int startDelaySeconds;
@@ -62,10 +59,6 @@ public class WorkerPoolService {
     /** Una ejecucion PENDING que no reune todos sus workers en este tiempo se cierra como FAILED. */
     @ConfigProperty(name = "orchestrator.pool.pending-claim-timeout-seconds", defaultValue = "180")
     int pendingClaimTimeoutSeconds;
-
-    private boolean poolEnabled() {
-        return "pool".equalsIgnoreCase(engine);
-    }
 
     // ---------------------------------------------------------------------
     //  Claim (pull): asigna atomicamente el siguiente shard libre
@@ -235,9 +228,6 @@ public class WorkerPoolService {
 
     @Scheduled(every = "10s", concurrentExecution = ConcurrentExecution.SKIP, delayed = "10s")
     void reap() {
-        if (!poolEnabled()) {
-            return;
-        }
         try {
             reapOrphanShards();
             failStalePendingExecutions();

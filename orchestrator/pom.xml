@@ -62,12 +62,6 @@
             <artifactId>flyway-sqlserver</artifactId>
         </dependency>
 
-        <!-- Kubernetes (Fabric8) -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-kubernetes-client</artifactId>
-        </dependency>
-
         <!-- Validacion -->
         <dependency>
             <groupId>io.quarkus</groupId>

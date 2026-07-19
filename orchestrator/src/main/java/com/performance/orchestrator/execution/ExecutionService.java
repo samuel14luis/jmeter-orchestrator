@@ -14,12 +14,8 @@ import com.performance.orchestrator.domain.NodeStatus;
 import com.performance.orchestrator.domain.Preset;
 import com.performance.orchestrator.domain.ScriptVersion;
 import com.performance.orchestrator.execution.ExecutionEvents.ExecutionEvent;
-import com.performance.orchestrator.k8s.KubernetesJobService;
-import com.performance.orchestrator.k8s.LaunchSpec;
 import com.performance.orchestrator.results.JtlAggregator;
 import com.performance.orchestrator.results.MetricsSummary;
-
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import io.quarkus.logging.Log;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -28,9 +24,11 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 /**
- * Motor de ejecuciones: valida guardrails, reparte la carga por sharding,
- * crea el Job de Kubernetes y (mediante reconciliacion periodica) sigue el
- * ciclo de vida PENDING -> RUNNING -> AGGREGATING -> COMPLETED/FAILED.
+ * Motor de ejecuciones (worker-pool por pull, Fase 7): valida guardrails, reparte
+ * la carga por sharding y crea el registro con N shards en estado PENDING. Los
+ * workers reclaman sus shards por pull ({@link com.performance.orchestrator.worker.WorkerPoolService});
+ * la reconciliacion periodica cierra las ejecuciones que quedan en AGGREGATING.
+ * Ciclo: PENDING -> RUNNING (start-gate) -> AGGREGATING -> COMPLETED/FAILED.
  *
  * Los limites transaccionales se manejan con QuarkusTransaction para que
  * funcionen tanto en el hilo de peticion como en el hilo del scheduler
@@ -40,9 +38,6 @@ import jakarta.inject.Inject;
 public class ExecutionService {
 
     @Inject
-    KubernetesJobService k8s;
-
-    @Inject
     GuardrailsService guardrails;
 
     @Inject
@@ -50,18 +45,6 @@ public class ExecutionService {
 
     @Inject
     ExecutionEvents events;
-
-    /**
-     * Motor de ejecucion: "jobs" (K8s Jobs via Fabric8, legado) o "pool"
-     * (worker-pool por pull, Fase 7). En modo pool el orquestador no crea Jobs:
-     * deja la ejecucion PENDING y los workers reclaman sus shards.
-     */
-    @ConfigProperty(name = "orchestrator.engine", defaultValue = "jobs")
-    String engine;
-
-    private boolean poolEngine() {
-        return "pool".equalsIgnoreCase(engine);
-    }
 
     // ---------------------------------------------------------------------
     //  Consulta (invocada desde REST: hay session de request)
@@ -178,43 +161,15 @@ public class ExecutionService {
     }
 
     /**
-     * Arranca la ejecucion segun el motor configurado. En modo pool no se crea
-     * ningun Job: la ejecucion queda PENDING con sus shards a la espera de que las
-     * replicas worker los reclamen (el start-gate la pasa a RUNNING). En modo jobs
-     * se crea el Job Indexed en Kubernetes.
+     * Encola la ejecucion en el worker-pool: no se crea ningun Job. La ejecucion
+     * queda PENDING con sus shards a la espera de que las replicas worker los
+     * reclamen por pull; el start-gate la pasa a RUNNING (ver WorkerPoolService).
      */
     private void startExecution(Long executionId) {
-        if (poolEngine()) {
-            int nodes = QuarkusTransaction.requiringNew().call(() -> get(executionId).nodes);
-            events.publish(executionId, new ExecutionEvent(executionId, "PENDING",
-                    "Esperando a que " + nodes + " worker(s) reclamen sus shards", null));
-            Log.infof("Ejecucion %d en cola para el worker-pool (%d shards)", executionId, nodes);
-            return;
-        }
-        LaunchSpec spec = QuarkusTransaction.requiringNew().call(() -> {
-            Execution exec = get(executionId);
-            ScriptVersion version = ScriptVersion.findById(exec.scriptVersionId);
-            ExecParams ep = new ExecParams(exec.effectiveParams);
-            return new LaunchSpec(
-                    exec.id, version.blobPath, exec.resultsPath, exec.nodes,
-                    ep.threads(), ep.rampUp(), ep.duration(),
-                    ep.targetHost(), ep.targetProtocol(), ep.extraProps());
-        });
-
-        try {
-            k8s.createExecutionJob(spec);
-            setStatus(executionId, ExecutionStatus.RUNNING, exec -> exec.startedAt = Instant.now());
-            events.publish(executionId, new ExecutionEvent(executionId, "RUNNING",
-                    "Job creado con " + spec.nodes() + " pods", null));
-        } catch (Exception e) {
-            Log.errorf(e, "Fallo creando el Job para la ejecucion %d", executionId);
-            setStatus(executionId, ExecutionStatus.FAILED, exec -> {
-                exec.errorMessage = "No se pudo crear el Job de Kubernetes: " + e.getMessage();
-                exec.finishedAt = Instant.now();
-            });
-            events.publish(executionId, new ExecutionEvent(executionId, "FAILED", e.getMessage(), null));
-            events.complete(executionId);
-        }
+        int nodes = QuarkusTransaction.requiringNew().call(() -> get(executionId).nodes);
+        events.publish(executionId, new ExecutionEvent(executionId, "PENDING",
+                "Esperando a que " + nodes + " worker(s) reclamen sus shards", null));
+        Log.infof("Ejecucion %d en cola para el worker-pool (%d shards)", executionId, nodes);
     }
 
     // ---------------------------------------------------------------------
@@ -222,11 +177,11 @@ public class ExecutionService {
     // ---------------------------------------------------------------------
 
     public Execution cancel(Long executionId, String user) {
-        // Marcamos CANCELLED (estado terminal) ANTES de borrar el Job, y comprobamos
-        // el estado de forma atomica dentro de la transaccion. El reconciler solo
-        // itera ejecuciones no terminales, asi que en cuanto queda CANCELLED deja de
-        // tocarla: no puede haber una carrera en la que el poll la mueva a
-        // AGGREGATING/COMPLETED y pise nuestra cancelacion.
+        // Marcamos CANCELLED (estado terminal) de forma atomica dentro de la
+        // transaccion, comprobando el estado ahi mismo. El reconciler solo itera
+        // ejecuciones no terminales, asi que en cuanto queda CANCELLED deja de
+        // tocarla. Los shards no entregados quedan CANCELLED; sus workers lo
+        // detectan en el siguiente heartbeat y abortan jmeter -n.
         QuarkusTransaction.requiringNew().run(() -> {
             Execution e = Execution.findById(executionId);
             if (e == null) {
@@ -237,79 +192,25 @@ public class ExecutionService {
             }
             e.status = ExecutionStatus.CANCELLED;
             e.finishedAt = Instant.now();
-            if (poolEngine()) {
-                // Los shards no entregados quedan CANCELLED; sus workers lo detectan
-                // en el siguiente heartbeat y abortan jmeter -n.
-                ExecutionNode.update("status = ?1, updatedAt = ?2 "
-                                + "where executionId = ?3 and status in ?4",
-                        NodeStatus.CANCELLED, Instant.now(), executionId,
-                        List.of(NodeStatus.PENDING, NodeStatus.CLAIMED, NodeStatus.RUNNING));
-            }
+            ExecutionNode.update("status = ?1, updatedAt = ?2 "
+                            + "where executionId = ?3 and status in ?4",
+                    NodeStatus.CANCELLED, Instant.now(), executionId,
+                    List.of(NodeStatus.PENDING, NodeStatus.CLAIMED, NodeStatus.RUNNING));
             AuditEvent.record(user, "CANCEL", "Execution", executionId, null);
         });
-        if (!poolEngine()) {
-            try {
-                k8s.deleteExecutionJob(executionId);
-            } catch (Exception e) {
-                Log.warnf(e, "No se pudo borrar el Job al cancelar la ejecucion %d", executionId);
-            }
-        }
         events.publish(executionId, new ExecutionEvent(executionId, "CANCELLED", "Cancelada por " + user, null));
         events.complete(executionId);
         return getInTx(executionId);
     }
 
     // ---------------------------------------------------------------------
-    //  Utilidades transaccionales
-    // ---------------------------------------------------------------------
-
-    private void setStatus(Long id, ExecutionStatus status, java.util.function.Consumer<Execution> mutator) {
-        QuarkusTransaction.requiringNew().run(() -> {
-            Execution e = Execution.findById(id);
-            if (e != null) {
-                e.status = status;
-                if (mutator != null) {
-                    mutator.accept(e);
-                }
-            }
-        });
-    }
-
-    // ---------------------------------------------------------------------
     //  Reconciliacion (invocada desde el scheduler)
     // ---------------------------------------------------------------------
 
-    List<Execution> activeExecutions() {
+    /** Ejecuciones listas para agregar (todos sus shards entregados). */
+    List<Execution> aggregatingExecutions() {
         return QuarkusTransaction.requiringNew().call(() ->
-                Execution.list("status in ?1",
-                        List.of(ExecutionStatus.RUNNING, ExecutionStatus.AGGREGATING)));
-    }
-
-    /** Actualiza el estado de los nodos de forma agregada segun el Job. */
-    void updateNodesCoarse(Long executionId, int succeeded, int failed) {
-        QuarkusTransaction.requiringNew().run(() -> {
-            List<ExecutionNode> nodes = ExecutionNode.listByExecution(executionId);
-            for (int i = 0; i < nodes.size(); i++) {
-                ExecutionNode n = nodes.get(i);
-                if (i < succeeded) {
-                    n.status = NodeStatus.SUCCEEDED;
-                } else if (i < succeeded + failed) {
-                    n.status = NodeStatus.FAILED;
-                } else {
-                    n.status = NodeStatus.RUNNING;
-                }
-                n.updatedAt = Instant.now();
-            }
-        });
-    }
-
-    void moveToAggregating(Long executionId) {
-        QuarkusTransaction.requiringNew().run(() -> {
-            Execution e = Execution.findById(executionId);
-            if (e != null && e.status == ExecutionStatus.RUNNING) {
-                e.status = ExecutionStatus.AGGREGATING;
-            }
-        });
+                Execution.list("status = ?1", ExecutionStatus.AGGREGATING));
     }
 
     /** Ejecuta la fusion de JTL y cierra la ejecucion (COMPLETED/FAILED). */
