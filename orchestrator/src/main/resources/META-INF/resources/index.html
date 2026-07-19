@@ -128,6 +128,13 @@
     .tile.err .v { color: var(--err); }
     .tile.run .v { color: var(--accent); }
     details.result summary { cursor: pointer; }
+    /* --- editor de scripts in-app --- */
+    .editor-ta {
+      width: 100%; min-height: 300px; resize: vertical; line-height: 1.45;
+      background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: .6rem;
+    }
+    .editor-ta:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   </style>
 </head>
 <body>
@@ -379,10 +386,12 @@ async function loadVersions(scriptId) {
         <td class="mono">${(v.checksumSha256||'').slice(0,12)}…</td>
         <td>${esc(v.createdBy||'—')}</td>
         <td class="actions">
+          <button class="ghost sm" onclick="openEditor(${scriptId},${v.versionNumber},this)">Editar</button>
           <button class="ghost sm" onclick="validate(${scriptId},${v.versionNumber},this)">Validar</button>
           <button class="ghost sm" onclick="pretest(${scriptId},${v.versionNumber},this)">Pre-test</button>
         </td></tr>
-        <tr id="valrow-${scriptId}-${v.versionNumber}" style="display:none"><td colspan="4"></td></tr>`).join('')
+        <tr id="valrow-${scriptId}-${v.versionNumber}" style="display:none"><td colspan="4"></td></tr>
+        <tr id="editrow-${scriptId}-${v.versionNumber}" style="display:none"><td colspan="4"></td></tr>`).join('')
     }</tbody></table>`;
   } catch (e) { el.innerHTML = `<span class="muted">Error versiones: ${esc(e.message)}</span>`; }
 }
@@ -406,6 +415,53 @@ async function pretest(sid, ver, btn) {
     toast('Pre-test lanzado · ejecución #' + e.id + ' (' + e.status + ')', 'ok');
     streamExecution(e.id);
   } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
+}
+// --- editor in-app: ver contenido, editar y guardar como versión nueva ---
+async function openEditor(sid, ver, btn) {
+  const row = $(`#editrow-${sid}-${ver}`);
+  if (row.style.display === '') { row.style.display = 'none'; return; }
+  row.style.display = '';
+  const cell = row.firstElementChild;
+  cell.innerHTML = '<span class="muted">Cargando contenido…</span>';
+  try {
+    const xml = await req(`/api/scripts/${sid}/versions/${ver}/content`);
+    cell.innerHTML = `
+      <div class="field" style="margin:.2rem 0 .5rem">
+        <label>Editando desde v${ver} · al guardar se crea una versión nueva (se valida al guardar)</label>
+        <textarea class="editor-ta mono" id="ed-ta-${sid}-${ver}" spellcheck="false"></textarea>
+      </div>
+      <div class="row2" style="align-items:end">
+        <div class="field" style="margin:0"><label>Notas (opcional)</label>
+          <input id="ed-notes-${sid}-${ver}" placeholder="qué cambiaste"></div>
+        <div class="actions" style="justify-content:flex-end">
+          <button class="ghost sm" onclick="$('#editrow-${sid}-${ver}').style.display='none'">Cancelar</button>
+          <button class="sm" onclick="saveEditedVersion(${sid},${ver},this)">Guardar como nueva versión</button>
+        </div>
+      </div>
+      <div id="ed-msg-${sid}-${ver}" style="font-size:.8rem;margin-top:.5rem"></div>`;
+    $(`#ed-ta-${sid}-${ver}`).value = typeof xml === 'string' ? xml : String(xml ?? '');
+  } catch (e) {
+    cell.innerHTML = `<span class="muted">Error cargando contenido: ${esc(e.message)}</span>`;
+  }
+}
+async function saveEditedVersion(sid, fromVer, btn) {
+  const ta = $(`#ed-ta-${sid}-${fromVer}`);
+  const notes = $(`#ed-notes-${sid}-${fromVer}`).value || '';
+  const msg = $(`#ed-msg-${sid}-${fromVer}`);
+  if (!ta.value.trim()) { toast('El contenido está vacío', 'err'); return; }
+  btn.disabled = true; msg.innerHTML = '<span class="muted">Guardando…</span>';
+  try {
+    const v = await req(`/api/scripts/${sid}/versions?notes=${encodeURIComponent(notes)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/xml' },
+      body: ta.value
+    });
+    toast('Guardada versión nueva · v' + v.versionNumber, 'ok');
+    loadVersions(sid); // re-renderiza la tabla y colapsa el editor
+  } catch (e) {
+    msg.innerHTML = `<b style="color:var(--err)">${esc(e.message)}</b>`;
+    toast(e.message, 'err');
+  } finally { btn.disabled = false; }
 }
 $('#s-upload').addEventListener('click', async () => {
   const f = $('#s-file').files[0];
