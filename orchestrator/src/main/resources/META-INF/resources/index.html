@@ -77,8 +77,10 @@
     .st-RUNNING { background: rgba(79,140,255,.18); color: var(--accent); }
     .st-AGGREGATING { background: rgba(124,92,255,.18); color: var(--accent2); }
     .st-PENDING, .st-QUEUED { background: rgba(245,181,68,.18); color: var(--warn); }
-    .st-SUCCEEDED, .st-COMPLETED { background: rgba(53,195,125,.18); color: var(--ok); }
+    .st-SUCCEEDED, .st-COMPLETED, .st-OK { background: rgba(53,195,125,.18); color: var(--ok); }
     .st-FAILED, .st-CANCELLED { background: rgba(255,92,108,.18); color: var(--err); }
+    .st-DEGRADED { background: rgba(245,181,68,.18); color: var(--warn); }
+    .st-UNKNOWN { background: var(--chip); color: var(--muted); }
     .muted { color: var(--muted); }
     .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin-bottom: 1rem; }
     .mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: .82rem; }
@@ -153,6 +155,7 @@
     <button data-tab="scripts" class="active">Scripts</button>
     <button data-tab="presets">Presets</button>
     <button data-tab="executions">Ejecuciones</button>
+    <button data-tab="status">Estado</button>
   </nav>
 
   <main>
@@ -303,6 +306,46 @@
         </div>
       </div>
     </section>
+
+    <!-- ================= ESTADO (monitoreo sintético) ================= -->
+    <section class="tab" id="tab-status">
+      <div class="grid">
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Nuevo chequeo programado</h2>
+            <div class="field">
+              <label>Nombre</label>
+              <input id="sch-name" placeholder="salud-horaria">
+            </div>
+            <div class="row2">
+              <div class="field"><label>Cron (UNIX, 5 campos)</label><input id="sch-cron" value="0 * * * *"></div>
+              <div class="field"><label>Webhook URL (opcional)</label><input id="sch-webhook" placeholder="https://…"></div>
+            </div>
+            <div class="field">
+              <label>Servicios a chequear</label>
+              <div id="sch-services"></div>
+              <button class="ghost sm" id="sch-add-svc" style="margin-top:.4rem">+ Añadir servicio</button>
+            </div>
+            <button id="sch-create" style="margin-top:.6rem">Crear chequeo</button>
+            <p class="muted" style="font-size:.78rem;margin:.7rem 0 0">
+              Cada servicio ejecuta su preset (1 shard). Veredicto: <b>FAILED</b> si no
+              corre / error% supera el umbral; <b>DEGRADED</b> si el p95 lo supera; si no, <b>OK</b>.
+            </p>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Estado de servicios
+              <button class="ghost sm" id="sch-refresh" style="margin-left:auto">↻ Refrescar</button></h2>
+            <div id="statusList"></div>
+          </div>
+          <div class="card">
+            <h2><span class="dot"></span>Chequeos programados</h2>
+            <div id="schedulesList"></div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <div id="toast"></div>
@@ -349,6 +392,7 @@ document.querySelectorAll('nav.tabs button').forEach(b => {
     $('#tab-' + b.dataset.tab).classList.add('active');
     if (b.dataset.tab === 'presets') { loadScriptsInto('#p-script'); loadPresets(); }
     if (b.dataset.tab === 'executions') { loadVersionsInto('#e-version'); loadExecutions(); }
+    if (b.dataset.tab === 'status') { loadStatus(); loadSchedules(); initServiceRows(); }
   });
 });
 
@@ -667,6 +711,104 @@ function streamExecution(id) {
   evtSrc.onerror = () => { push('— stream cerrado —'); evtSrc.close(); loadExecutions(); };
 }
 $('#liveStop').addEventListener('click', () => { if (evtSrc) evtSrc.close(); $('#liveCard').style.display = 'none'; });
+
+// ================= ESTADO (monitoreo sintético) =================
+let presetCache = [];
+async function loadPresetOptions() {
+  try { presetCache = await req('/api/presets'); } catch { presetCache = []; }
+}
+function presetOptions(sel) {
+  return presetCache.map(p => `<option value="${p.id}"${p.id==sel?' selected':''}>#${p.id} · ${esc(p.name)}</option>`).join('')
+    || '<option value="">(crea un preset primero)</option>';
+}
+function serviceRow(svc = {}) {
+  const div = document.createElement('div');
+  div.className = 'svc-row row2';
+  div.style = 'grid-template-columns:1.2fr 1fr .8fr .8fr auto;gap:.4rem;margin-bottom:.4rem;align-items:center';
+  div.innerHTML = `
+    <select class="svc-preset">${presetOptions(svc.presetId)}</select>
+    <input class="svc-name" placeholder="nombre servicio" value="${esc(svc.serviceName||'')}">
+    <input class="svc-p95" type="number" placeholder="p95 máx ms" value="${svc.p95MaxMs??500}" title="p95 máximo (ms)">
+    <input class="svc-err" type="number" step="0.1" placeholder="err% máx" value="${svc.errorPctMax??1}" title="% error máximo">
+    <button class="ghost sm svc-del" title="quitar">🗑</button>`;
+  div.querySelector('.svc-del').addEventListener('click', () => div.remove());
+  return div;
+}
+async function initServiceRows() {
+  await loadPresetOptions();
+  const box = $('#sch-services');
+  if (!box.children.length) box.appendChild(serviceRow());
+}
+$('#sch-add-svc').addEventListener('click', () => $('#sch-services').appendChild(serviceRow()));
+$('#sch-create').addEventListener('click', async () => {
+  const services = [...document.querySelectorAll('#sch-services .svc-row')].map(r => ({
+    presetId: Number(r.querySelector('.svc-preset').value),
+    serviceName: r.querySelector('.svc-name').value || null,
+    p95MaxMs: Number(r.querySelector('.svc-p95').value),
+    errorPctMax: Number(r.querySelector('.svc-err').value)
+  })).filter(s => s.presetId);
+  if (!services.length) { toast('Añade al menos un servicio con preset', 'err'); return; }
+  const body = {
+    name: $('#sch-name').value, cronExpr: $('#sch-cron').value,
+    webhookUrl: $('#sch-webhook').value || null, services
+  };
+  try {
+    await req('/api/schedules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Chequeo creado', 'ok');
+    $('#sch-name').value = ''; $('#sch-services').innerHTML = ''; initServiceRows();
+    loadSchedules(); loadStatus();
+  } catch (e) { toast(e.message, 'err'); }
+});
+$('#sch-refresh').addEventListener('click', () => { loadStatus(); loadSchedules(); });
+
+async function loadStatus() {
+  const box = $('#statusList');
+  box.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const rows = await req('/api/status');
+    if (!rows.length) { box.innerHTML = '<div class="empty">No hay chequeos definidos.</div>'; return; }
+    box.innerHTML = rows.map(r => `
+      <div class="card" style="margin-bottom:.6rem;background:var(--panel2)">
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <b>${esc(r.scheduleName)}</b> ${st(r.overallStatus)}
+          <span class="muted" style="margin-left:auto;font-size:.75rem">${r.at ? 'última: '+fmt(r.at) : 'sin correr'}</span>
+        </div>
+        ${(r.services&&r.services.length) ? `<div style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.4rem">${
+          r.services.map(s => `<span class="chip">${esc(s.serviceName)} ${st(s.status)}${s.p95!=null?` <span class="muted">p95 ${s.p95}ms · ${s.errorPct}%</span>`:''}</span>`).join('')
+        }</div>` : '<div class="muted" style="font-size:.8rem;margin-top:.3rem">Aún sin resultados</div>'}
+      </div>`).join('');
+  } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
+}
+async function loadSchedules() {
+  const box = $('#schedulesList');
+  box.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const list = await req('/api/schedules');
+    if (!list.length) { box.innerHTML = '<div class="empty">No hay chequeos.</div>'; return; }
+    box.innerHTML = `<table><thead><tr><th>Nombre</th><th>Cron</th><th>Servicios</th><th>Último</th><th></th></tr></thead><tbody>${
+      list.map(s => `<tr>
+        <td><b>${esc(s.name)}</b>${s.enabled?'':' <span class="muted">(off)</span>'}</td>
+        <td class="mono" style="font-size:.78rem">${esc(s.cronExpr)}</td>
+        <td>${(s.services||[]).length}</td>
+        <td>${s.lastRun ? st(s.lastRun.overallStatus) : '<span class="muted">—</span>'}</td>
+        <td class="actions">
+          <button class="sm" onclick="runSchedule(${s.id})">Ejecutar</button>
+          <button class="ghost sm" onclick="delSchedule(${s.id})">🗑</button>
+        </td></tr>`).join('')
+    }</tbody></table>`;
+  } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
+}
+async function runSchedule(id) {
+  try {
+    await req(`/api/schedules/${id}/run-now`, { method:'POST' });
+    toast('Chequeo lanzado (corriendo en segundo plano)…', 'ok');
+    setTimeout(() => { loadStatus(); loadSchedules(); }, 4000);
+  } catch (e) { toast(e.message, 'err'); }
+}
+async function delSchedule(id) {
+  try { await req('/api/schedules/'+id, { method:'DELETE' }); toast('Chequeo eliminado', 'ok'); loadStatus(); loadSchedules(); }
+  catch (e) { toast(e.message, 'err'); }
+}
 
 // --- utils ---
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
