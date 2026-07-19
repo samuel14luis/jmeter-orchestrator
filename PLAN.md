@@ -400,15 +400,25 @@ API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resum
 **Fase 7 COMPLETA:** cumplida y verificada end-to-end en minikube con JMeter real, y el
 motor legado de Jobs/Fabric8 retirado (el pool sigue sumando RPS exacto sin él).
 
-### Fase 8 — Monitoreo sintético programado (≈1–2 semanas, tras Fase 7) — PENDIENTE, P1
-- [ ] Entidades `Schedule` y `ScheduleRun` + migración Flyway
-- [ ] Scheduler cron en el orquestador (1 réplica ⇒ sin elección de líder) + `run-now`
-- [ ] Umbrales por preset (p95 máx, % error máx) y veredicto `OK | DEGRADED | FAILED`
-- [ ] Webhook HTTP en fallo/degradación (URL configurable, reintentos básicos)
-- [ ] UI: vista "Estado de servicios" (semáforo por servicio + histórico de corridas)
+### Fase 8 — Monitoreo sintético programado — HECHA, P1
+- [x] Entidades `Schedule` y `ScheduleRun` (columnas JSON vía `JsonListConverter`,
+      enum `ServiceStatus`) + migración Flyway V3
+- [x] Scheduler cron en el orquestador (tick `@Scheduled` 60s en la única réplica ⇒
+      sin elección de líder, cron UNIX de 5 campos vía cron-utils) + `run-now` async
+- [x] Umbrales por servicio (p95 máx, % error máx) y veredicto `OK | DEGRADED | FAILED`
+      (peor de los servicios = veredicto de la corrida). Cada chequeo lanza el preset
+      (1 shard) por el worker-pool, espera a terminal y clasifica desde el resumen.
+- [x] Webhook HTTP en fallo/degradación (`WebhookSender`, `java.net.http`, payload sin
+      datos sensibles; un fallo de envío se loguea y no rompe la corrida)
+- [x] UI: pestaña "Estado" (alta de chequeos con fila por servicio, semáforo por
+      servicio con p95/error%, tabla de chequeos con `run-now`/borrar)
+- [x] API: `/api/schedules` (CRUD + `run-now` + `runs`) y `/api/status`
 
-**Criterio:** un Schedule horario corre solo; un servicio caído se ve en la UI y
-dispara el webhook en esa misma corrida.
+**Criterio:** un Schedule corre solo; un servicio caído se ve en la UI y dispara el
+webhook en esa misma corrida. ✅ **Verificado end-to-end en minikube**: un schedule con
+3 servicios dio OK / DEGRADED / FAILED contra `target-api` (fast=OK, fast+p95max0=
+DEGRADED, flaky con 9.83% error>0=FAILED), veredicto global FAILED, `/api/status` y la
+pestaña Estado lo reflejan, y el webhook se disparó.
 
 ### Deuda de calidad transversal (añadida 2026-07-19)
 Hoy solo existe un test unitario (`ExecParamsTest`). Por orden de retorno:
@@ -459,6 +469,7 @@ jmeter-orchestrator/
 │   ├── src/main/java/.../rest/      # Recursos REST + SSE
 │   ├── src/main/java/.../domain/    # Entidades Panache, servicios
 │   ├── src/main/java/.../worker/    # Motor worker-pool: WorkerPoolService + API interna
+│   ├── src/main/java/.../schedule/   # Monitoreo sintético: ScheduleService + WebhookSender
 │   ├── src/main/java/.../results/   # Fusión de JTL, reporte, resumen
 │   ├── src/main/java/.../storage/   # Almacén local de artefactos del orquestador
 │   └── src/main/resources/db/migration/   # Flyway

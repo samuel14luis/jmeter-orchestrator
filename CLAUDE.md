@@ -11,7 +11,7 @@ Quarkus 3.15.1 LTS · Java 21 · SQL Server · JMeter 5.6.x · Flyway (T-SQL) ·
 Hibernate ORM Panache. **Sin dependencia de Kubernetes en runtime** (Fabric8 retirado
 en la Fase 7).
 
-## Estado actual (2026-07-19) — Fases 0–7 HECHAS
+## Estado actual (2026-07-19) — Fases 0–8 HECHAS
 
 - **Repo git propio** en la carpeta del proyecto (rama `main`, con commits). Ya NO es
   el home `C:\Users\User`. Commitear solo lo del proyecto; nunca `git add` del home.
@@ -51,6 +51,8 @@ orchestrator/     Servicio Quarkus (código Java + pom.xml + application.propert
     worker/       Motor worker-pool: WorkerPoolService (claim/start-gate/heartbeat/
                   resultados/reaper), WorkerApiResource (/internal/*), WorkerAuthFilter
                   (token), WorkerDtos
+    schedule/     Monitoreo sintético (Fase 8): ScheduleService (tick cron @Scheduled,
+                  veredicto OK/DEGRADED/FAILED), WebhookSender
     results/      JtlAggregator (fusión JTL + percentiles), MetricsSummary
     storage/      StorageService + LocalStorageService (volumen local del orquestador)
     rest/         ScriptResource, PresetResource, ExecutionResource (+SSE), dto/Dtos
@@ -60,6 +62,7 @@ orchestrator/     Servicio Quarkus (código Java + pom.xml + application.propert
     application.properties
     db/migration/V1__initial_schema.sql    (T-SQL: IDENTITY, NVARCHAR, DATETIME2, ISJSON)
     db/migration/V2__worker_pool.sql       (start_at, worker_id, heartbeat_at, started_at)
+    db/migration/V3__schedules.sql         (schedule, schedule_run — monitoreo sintético)
 worker/           Dockerfile (JMeter 5.6.3 + plugins + jq) + agent.sh (agente pull)
 deploy/pool/      Topología worker-pool: 00-namespace, 10-orchestrator, 20-worker, README
 deploy/monitoring/ y deploy/target-api/   SOLO demo local (Grafana/InfluxDB/Prometheus, SUT)
@@ -159,9 +162,11 @@ mvn quarkus:dev              # modo dev con hot reload
 ```
 
 ## Pendiente / fast-follow
-- **Fase 8 (P1, siguiente)**: monitoreo sintético programado — Schedules cron por
-  servicio, veredicto OK/DEGRADED/FAILED contra umbrales, webhook + vista de estado.
-- **Fase 6 (endurecimiento)**: OIDC + roles (sustituye `X-User`), lista blanca de
+- **Fase 8 HECHA**: monitoreo sintético programado — `schedule/` (ScheduleService con
+  tick cron `@Scheduled`, veredicto OK/DEGRADED/FAILED, WebhookSender), API
+  `/api/schedules` + `/api/status`, pestaña "Estado" en la UI, migración Flyway V3.
+  Verificado e2e en minikube (3 servicios → OK/DEGRADED/FAILED + webhook).
+- **Fase 6 (endurecimiento, P1 siguiente)**: OIDC + roles (sustituye `X-User`), lista blanca de
   targets por entorno, retención/limpieza de artefactos, `workerImage` en `Execution`.
 - Otros: dashboard HTML nativo de JMeter (`jmeter -g merged.jtl`, hoy resumen propio),
   partición fina de CSV por shard, comparación contra baseline, tiles de métricas en
