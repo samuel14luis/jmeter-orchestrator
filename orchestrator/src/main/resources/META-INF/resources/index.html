@@ -75,6 +75,7 @@
       font-weight: 600; background: var(--chip); }
     .st { padding: .12rem .5rem; border-radius: 999px; font-size: .74rem; font-weight: 700; }
     .st-RUNNING { background: rgba(79,140,255,.18); color: var(--accent); }
+    .st-AGGREGATING { background: rgba(124,92,255,.18); color: var(--accent2); }
     .st-PENDING, .st-QUEUED { background: rgba(245,181,68,.18); color: var(--warn); }
     .st-SUCCEEDED, .st-COMPLETED { background: rgba(53,195,125,.18); color: var(--ok); }
     .st-FAILED, .st-CANCELLED { background: rgba(255,92,108,.18); color: var(--err); }
@@ -107,6 +108,26 @@
     }
     .badge-ver { cursor: pointer; }
     .actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+    /* --- progreso en vivo (barra + tiles) --- */
+    .progress-track {
+      height: 12px; background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 999px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; width: 0%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width .4s ease;
+    }
+    .progress-label { margin: .35rem 0 .9rem; font-size: .78rem; color: var(--muted); }
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; margin-bottom: .8rem; }
+    @media (max-width: 520px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+    .tile { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: .55rem .7rem; }
+    .tile .k { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+    .tile .v { font-size: 1.4rem; font-weight: 700; margin-top: .1rem; }
+    .tile.ok .v { color: var(--ok); }
+    .tile.err .v { color: var(--err); }
+    .tile.run .v { color: var(--accent); }
+    details.result summary { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -248,8 +269,8 @@
                 <label>Estado</label>
                 <select id="f-status">
                   <option value="">(todos)</option>
-                  <option>PENDING</option><option>RUNNING</option><option>SUCCEEDED</option>
-                  <option>FAILED</option><option>CANCELLED</option>
+                  <option>PENDING</option><option>RUNNING</option><option>AGGREGATING</option>
+                  <option>COMPLETED</option><option>FAILED</option><option>CANCELLED</option>
                 </select>
               </div>
               <div class="field" style="margin:0">
@@ -262,8 +283,15 @@
           </div>
           <div class="card" id="liveCard" style="display:none">
             <h2><span class="dot"></span>Progreso en vivo · ejecución <span id="liveId"></span>
+              <span class="st" id="liveStatus" style="margin-left:.4rem"></span>
               <button class="ghost sm" id="liveStop" style="margin-left:auto">Detener</button></h2>
-            <div class="live-log" id="liveLog"></div>
+            <div class="progress-track"><div class="progress-fill" id="liveBar"></div></div>
+            <div class="progress-label" id="liveBarLabel">Esperando datos…</div>
+            <div class="tiles" id="liveTiles"></div>
+            <details class="result">
+              <summary class="muted">Ver log de eventos</summary>
+              <div class="live-log" id="liveLog"></div>
+            </details>
           </div>
         </div>
       </div>
@@ -502,7 +530,7 @@ async function loadExecutions() {
           <button class="ghost sm" onclick="streamExecution(${e.id})">En vivo</button>
           <button class="ghost sm" onclick="window.open('/api/executions/${e.id}/report','_blank')">Reporte</button>
           <button class="ghost sm" onclick="relaunch(${e.id})">Relanzar</button>
-          ${['RUNNING','PENDING','QUEUED'].includes(e.status) ? `<button class="ghost sm" onclick="cancelExec(${e.id})">Cancelar</button>` : ''}
+          ${['PENDING','RUNNING','AGGREGATING'].includes(e.status) ? `<button class="ghost sm" onclick="cancelExec(${e.id})">Cancelar</button>` : ''}
         </td></tr>
         <tr id="execrow-${e.id}" style="display:none"><td colspan="5"></td></tr>`).join('')
     }</tbody></table>`;
@@ -538,17 +566,47 @@ $('#f-apply').addEventListener('click', loadExecutions);
 
 // --- SSE live stream ---
 let evtSrc = null;
+function setLiveStatus(s) {
+  const el = $('#liveStatus');
+  el.className = 'st st-' + (s || 'PENDING');
+  el.textContent = s || '—';
+}
+function renderLiveTiles(d) {
+  const total = Number(d.total) || 0;
+  const ok = Number(d.succeeded) || 0;
+  const failed = Number(d.failed) || 0;
+  const active = Number(d.active) || 0;
+  const done = ok + failed;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  $('#liveBar').style.width = pct + '%';
+  $('#liveBarLabel').textContent = `${done}/${total} pods terminados · ${pct}%`;
+  $('#liveTiles').innerHTML = `
+    <div class="tile ok"><div class="k">OK</div><div class="v">${ok}</div></div>
+    <div class="tile err"><div class="k">Fallo</div><div class="v">${failed}</div></div>
+    <div class="tile run"><div class="k">Activos</div><div class="v">${active}</div></div>
+    <div class="tile"><div class="k">Total</div><div class="v">${total}</div></div>`;
+}
 function streamExecution(id) {
   if (evtSrc) evtSrc.close();
   $('#liveCard').style.display = '';
   $('#liveId').textContent = '#' + id;
+  // reset visuales
+  $('#liveBar').style.width = '0%';
+  $('#liveBarLabel').textContent = 'Esperando datos…';
+  $('#liveTiles').innerHTML = '';
+  setLiveStatus('PENDING');
   const log = $('#liveLog'); log.textContent = '';
   const push = (t) => { log.textContent += t + '\n'; log.scrollTop = log.scrollHeight; };
   push('Conectando al stream de la ejecución #' + id + '…');
   evtSrc = new EventSource('/api/executions/' + id + '/stream');
   evtSrc.onmessage = (m) => {
-    try { const d = JSON.parse(m.data); push(JSON.stringify(d)); }
-    catch { push(m.data); }
+    let d = null;
+    try { d = JSON.parse(m.data); } catch { push(m.data); return; }
+    if (d.status) setLiveStatus(d.status);
+    if (d.data && typeof d.data === 'object') renderLiveTiles(d.data);
+    // Al completar sin un ultimo evento de conteo, rellena la barra.
+    if (d.status === 'COMPLETED') { $('#liveBar').style.width = '100%'; }
+    push(`[${d.status || '—'}] ${d.message || ''}`.trim());
   };
   evtSrc.onerror = () => { push('— stream cerrado —'); evtSrc.close(); loadExecutions(); };
 }
