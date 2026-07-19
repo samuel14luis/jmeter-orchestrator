@@ -372,8 +372,12 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
       `orchestrator.engine=jobs|pool` (default pool); reconciler y cancel adaptados.
       Migración Flyway V2. **Verificado end-to-end simulando workers** (RPS suma
       3+3=6, reparto 10/3→4,3,3, cancelación por heartbeat).
-- [ ] Agente worker (en la imagen del worker): bucle claim → espera del start-gate →
-      `jmeter -n` → heartbeat → subida de `jtl.gz` + log → volver al bucle
+- [x] Agente worker (`worker/agent.sh`): bucle claim → descarga del script por HTTP →
+      espera del start-gate → `jmeter -n` → heartbeat (aborta si cancelada) → subida de
+      `jtl.gz` + log → volver al bucle. Dispatcher `run.sh` (pull si `ORCHESTRATOR_URL`,
+      si no el entrypoint legado de Jobs); Dockerfile con `jq`. **Verificado end-to-end
+      con dos agentes reales contra el backend vivo** (JMeter stubbeado): claims de shard
+      distintos, start-gate sincronizado, cierre COMPLETED con samples 4+4=8.
 - [ ] Manifiestos: Deployment `worker` (N réplicas) + Deployment `orchestrator`
       (1 réplica); retirar el RBAC de Jobs
 - [ ] Retirar `KubernetesJobService`/Fabric8 y el `entrypoint.sh` basado en
@@ -384,8 +388,9 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
 
 **Criterio:** una prueba de N shards corre completa sobre el worker-pool sin tocar el
 API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resumen.
-El **backend del protocolo está hecho y verificado**; falta el agente worker real
-(imagen), los manifiestos, retirar Fabric8 y la validación con carga real en minikube.
+El **backend del protocolo y el agente worker están hechos y verificados** (con JMeter
+stubbeado); falta construir la imagen real, los manifiestos de despliegue, retirar
+Fabric8 y la validación con carga JMeter real en minikube.
 
 ### Fase 8 — Monitoreo sintético programado (≈1–2 semanas, tras Fase 7) — PENDIENTE, P1
 - [ ] Entidades `Schedule` y `ScheduleRun` + migración Flyway
