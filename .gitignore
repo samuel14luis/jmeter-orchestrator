@@ -1,0 +1,32 @@
+# ---- Build output (Maven / Quarkus) ----
+# Anclado a la raíz de los módulos para NO ignorar el paquete Java
+# com/performance/target/ (colisión de nombre con el dir de build de Maven).
+/target/
+/*/target/
+.mvn/
+*.class
+
+# ---- Quarkus dev ----
+.quarkus/
+*.log
+
+# ---- Datos y secretos locales ----
+data/
+.env
+*.env
+secrets/
+*.pem
+*.key
+
+# ---- Node (si aparece UI en el futuro) ----
+node_modules/
+
+# ---- Claude Code (config local de máquina) ----
+.claude/settings.local.json
+
+# ---- IDE / OS ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
