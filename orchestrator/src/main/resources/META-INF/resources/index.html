@@ -130,6 +130,15 @@
     .tile.err .v { color: var(--err); }
     .tile.run .v { color: var(--accent); }
     details.result summary { cursor: pointer; }
+    /* --- modal --- */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      display: grid; place-items: center; z-index: 100; padding: 1rem; }
+    .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 1.2rem 1.3rem; width: min(540px, 94vw); max-height: 88vh; overflow: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+    .modal h3 { margin: 0 0 1rem; font-size: 1rem; display: flex; align-items: center; gap: .5rem; }
+    .modal .modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem;
+      position: sticky; bottom: -1.2rem; background: var(--panel); padding-top: .6rem; }
     /* --- editor de scripts in-app --- */
     .editor-ta {
       width: 100%; min-height: 300px; resize: vertical; line-height: 1.45;
@@ -349,9 +358,18 @@
   </main>
 
   <div id="toast"></div>
+  <div id="modal-backdrop" class="modal-backdrop" style="display:none"><div class="modal" id="modal-body"></div></div>
 
 <script>
 const $ = (s) => document.querySelector(s);
+// --- modal helpers ---
+function openModal(html) {
+  $('#modal-body').innerHTML = html;
+  $('#modal-backdrop').style.display = 'grid';
+}
+function closeModal() { $('#modal-backdrop').style.display = 'none'; $('#modal-body').innerHTML = ''; }
+document.addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 const api = (p) => p; // same origin
 const userVal = () => ($('#user').value || 'anonymous').trim();
 
@@ -548,8 +566,7 @@ async function loadPresets() {
           <button class="sm" onclick="launchPreset(${p.id},this)">Lanzar</button>
           <button class="ghost sm" onclick="editPreset(${p.id})">Editar</button>
           <button class="ghost sm" onclick="delPreset(${p.id})">🗑</button>
-        </td></tr>
-        <tr id="prow-${p.id}" style="display:none"><td colspan="5"></td></tr>`).join('')
+        </td></tr>`).join('')
     }</tbody></table>`;
     presetCacheP = list;
   } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
@@ -583,37 +600,33 @@ async function launchPreset(id, btn) {
 }
 let presetCacheP = [];
 function editPreset(id) {
-  const row = $('#prow-' + id);
-  if (row.style.display === '') { row.style.display = 'none'; return; }
-  row.style.display = '';
   const p = presetCacheP.find(x => x.id === id) || {};
   const pr = p.parameters || {};
-  row.firstElementChild.innerHTML = `
+  openModal(`
+    <h3><span class="dot"></span>Editar preset · ${esc(p.name||'#'+id)}</h3>
     <div class="row2" style="grid-template-columns:1fr 1fr">
-      <div class="field"><label>Nombre</label><input id="pe-name-${id}" value="${esc(p.name||'')}"></div>
+      <div class="field"><label>Nombre</label><input id="pe-name" value="${esc(p.name||'')}"></div>
       <div class="field"><label>Tipo</label>
-        <select id="pe-type-${id}">
-          ${['CARGA','ESTRES','PICO','RESISTENCIA'].map(t=>`<option${t===p.testType?' selected':''}>${t}</option>`).join('')}
-        </select></div>
+        <select id="pe-type">${['CARGA','ESTRES','PICO','RESISTENCIA'].map(t=>`<option${t===p.testType?' selected':''}>${t}</option>`).join('')}</select></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Hilos</label><input id="pe-threads-${id}" type="number" value="${pr.threads??10}"></div>
-      <div class="field"><label>Nodos</label><input id="pe-nodes-${id}" type="number" value="${pr.nodes??1}"></div>
-      <div class="field"><label>Ramp-up (s)</label><input id="pe-ramp-${id}" type="number" value="${pr.rampUp??30}"></div>
-      <div class="field"><label>Duración (s)</label><input id="pe-dur-${id}" type="number" value="${pr.duration??300}"></div>
+      <div class="field"><label>Hilos</label><input id="pe-threads" type="number" value="${pr.threads??10}"></div>
+      <div class="field"><label>Nodos</label><input id="pe-nodes" type="number" value="${pr.nodes??1}"></div>
+      <div class="field"><label>Ramp-up (s)</label><input id="pe-ramp" type="number" value="${pr.rampUp??30}"></div>
+      <div class="field"><label>Duración (s)</label><input id="pe-dur" type="number" value="${pr.duration??300}"></div>
     </div>
     <div class="row2" style="grid-template-columns:2fr 1fr">
-      <div class="field"><label>Host destino</label><input id="pe-host-${id}" value="${esc(pr.targetHost||'')}"></div>
-      <div class="field"><label>Entorno</label><input id="pe-env-${id}" value="${esc(p.targetEnv||'')}"></div>
+      <div class="field"><label>Host destino</label><input id="pe-host" value="${esc(pr.targetHost||'')}"></div>
+      <div class="field"><label>Entorno</label><input id="pe-env" value="${esc(p.targetEnv||'')}"></div>
     </div>
-    <div class="actions" style="justify-content:flex-end">
-      <button class="ghost sm" onclick="$('#prow-${id}').style.display='none'">Cancelar</button>
-      <button class="sm" onclick="savePreset(${id},this)">Guardar cambios</button>
-    </div>`;
+    <div class="modal-actions">
+      <button class="ghost" onclick="closeModal()">Cancelar</button>
+      <button onclick="savePreset(${id},this)">Guardar cambios</button>
+    </div>`);
 }
 async function savePreset(id, btn) {
   btn.disabled = true;
-  const g = k => $(`#pe-${k}-${id}`).value;
+  const g = k => $(`#pe-${k}`).value;
   const body = {
     name: g('name'), testType: g('type'), targetEnv: g('env') || null,
     parameters: {
@@ -623,8 +636,8 @@ async function savePreset(id, btn) {
   };
   try {
     await req('/api/presets/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    toast('Preset actualizado', 'ok'); loadPresets();
-  } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; }
+    closeModal(); toast('Preset actualizado', 'ok'); loadPresets();
+  } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
 }
 async function delPreset(id) {
   const p = presetCacheP.find(x => x.id === id);
