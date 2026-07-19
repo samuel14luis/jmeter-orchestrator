@@ -1,0 +1,91 @@
+# Despliegue del orquestador Quarkus. Monta el mismo PVC RWX que los workers
+# para leer/escribir artefactos, y usa la ServiceAccount con permisos sobre Jobs.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orchestrator-db
+  namespace: jmeter-orchestrator
+type: Opaque
+stringData:
+  DB_URL: "jdbc:sqlserver://sqlserver.jmeter-orchestrator.svc:1433;databaseName=jmeter_orchestrator;encrypt=true;trustServerCertificate=true"
+  DB_USERNAME: "sa"
+  DB_PASSWORD: "Your_strong_Passw0rd"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: jmeter-orchestrator
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator
+    spec:
+      serviceAccountName: orchestrator
+      containers:
+        - name: orchestrator
+          image: jmeter-orchestrator:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: orchestrator-db
+          env:
+            - name: K8S_WORKER_NAMESPACE
+              value: jmeter-workers
+            - name: WORKER_IMAGE
+              value: jmeter-worker:5.6.3
+            - name: ARTIFACTS_PVC
+              value: jmeter-artifacts
+            - name: ARTIFACTS_MOUNT
+              value: /artifacts
+            - name: STORAGE_KIND
+              value: local
+            - name: STORAGE_BASE_DIR
+              value: /artifacts
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: jmeter-artifacts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: jmeter-orchestrator
+spec:
+  selector:
+    app.kubernetes.io/name: orchestrator
+  ports:
+    - port: 80
+      targetPort: 8080

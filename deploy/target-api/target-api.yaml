@@ -1,0 +1,65 @@
+# =====================================================================
+#  API objetivo (System Under Test) - namespace 'sut'
+#  Quarkus + Micrometer; Prometheus la raspa via anotaciones pod.
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: target-api
+  namespace: sut
+  labels:
+    app: target-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: target-api
+  template:
+    metadata:
+      labels:
+        app: target-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/q/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: target-api
+          image: target-api:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: target-api
+  namespace: sut
+  labels:
+    app: target-api
+spec:
+  selector:
+    app: target-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

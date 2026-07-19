@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-target
+  namespace: monitoring
+data:
+  target-api.json: |
+    {
+      "uid": "target-api",
+      "title": "API objetivo - JVM / CPU / RAM (servidor)",
+      "tags": ["quarkus", "micrometer", "performance"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "5s",
+      "time": { "from": "now-15m", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "CPU (uso 0-100%)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "drawStyle": "line", "fillOpacity": 20 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "process", "expr": "process_cpu_usage{app=\"target-api\"}" },
+            { "refId": "B", "legendFormat": "system", "expr": "system_cpu_usage{app=\"target-api\"}" }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Memoria JVM (heap)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 20 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "used", "expr": "sum(jvm_memory_used_bytes{app=\"target-api\", area=\"heap\"})" },
+            { "refId": "B", "legendFormat": "committed", "expr": "sum(jvm_memory_committed_bytes{app=\"target-api\", area=\"heap\"})" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "HTTP requests/s (por endpoint, lado servidor)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "{{uri}} ({{status}})", "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{app=\"target-api\"}[1m]))" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Latencia media servidor (por endpoint)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "{{uri}}", "expr": "sum by (uri) (rate(http_server_requests_seconds_sum{app=\"target-api\"}[1m])) / sum by (uri) (rate(http_server_requests_seconds_count{app=\"target-api\"}[1m]))" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Hilos JVM vivos",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "live", "expr": "jvm_threads_live_threads{app=\"target-api\"}" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "GC (tiempo de pausa por segundo)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "bars", "fillOpacity": 40 } } },
+          "targets": [
+            { "refId": "A", "legendFormat": "gc pause/s", "expr": "sum(rate(jvm_gc_pause_seconds_sum{app=\"target-api\"}[1m]))" }
+          ]
+        }
+      ]
+    }

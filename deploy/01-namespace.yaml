@@ -1,0 +1,14 @@
+# Namespaces dedicados (seccion 10/12 del plan): aislar la carga del resto del cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jmeter-orchestrator
+  labels:
+    app.kubernetes.io/part-of: jmeter-orchestrator
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jmeter-workers
+  labels:
+    app.kubernetes.io/part-of: jmeter-orchestrator
