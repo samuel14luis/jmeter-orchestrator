@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JMeter Orchestrator</title>
+  <style>
+    :root {
+      --bg: #0f1420; --panel: #1a2130; --panel2: #222b3d; --border: #2d3a52;
+      --text: #e6ebf5; --muted: #93a1bd; --accent: #4f8cff; --accent2: #7c5cff;
+      --ok: #35c37d; --warn: #f5b544; --err: #ff5c6c; --chip: #2a3550;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f6fb; --panel: #ffffff; --panel2: #f0f3f9; --border: #d9e0ee;
+        --text: #1a2133; --muted: #5c6a86; --accent: #2f6bff; --accent2: #6b46ff;
+        --chip: #e7edfb;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+    }
+    header {
+      display: flex; align-items: center; gap: 1rem; padding: .8rem 1.4rem;
+      background: linear-gradient(90deg, var(--panel), var(--panel2));
+      border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+    }
+    header h1 { font-size: 1.05rem; margin: 0; font-weight: 650; letter-spacing: .2px; }
+    header .logo { width: 30px; height: 30px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2)); display: grid;
+      place-items: center; font-weight: 800; color: #fff; }
+    header .spacer { flex: 1; }
+    .user-box { display: flex; align-items: center; gap: .4rem; }
+    .user-box label { color: var(--muted); font-size: .8rem; }
+    input, select, textarea, button {
+      font: inherit; color: var(--text); background: var(--panel2);
+      border: 1px solid var(--border); border-radius: 8px; padding: .5rem .65rem;
+    }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    button {
+      cursor: pointer; background: var(--accent); color: #fff; border: none; font-weight: 600;
+      transition: filter .12s;
+    }
+    button:hover { filter: brightness(1.08); }
+    button.ghost { background: var(--chip); color: var(--text); }
+    button.sm { padding: .3rem .55rem; font-size: .8rem; border-radius: 6px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    nav.tabs { display: flex; gap: .3rem; padding: .8rem 1.4rem 0; border-bottom: 1px solid var(--border); }
+    nav.tabs button {
+      background: transparent; color: var(--muted); border-radius: 8px 8px 0 0; font-weight: 600;
+      padding: .55rem 1rem; border-bottom: 2px solid transparent;
+    }
+    nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+    main { padding: 1.4rem; max-width: 1180px; margin: 0 auto; }
+    .tab { display: none; } .tab.active { display: block; }
+    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 1.2rem; align-items: start; }
+    @media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 1.1rem; margin-bottom: 1.2rem;
+    }
+    .card h2 { margin: 0 0 .9rem; font-size: .95rem; display: flex; align-items: center; gap: .5rem; }
+    .card h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .field { margin-bottom: .7rem; }
+    .field label { display: block; color: var(--muted); font-size: .78rem; margin-bottom: .25rem; }
+    .field input, .field select, .field textarea { width: 100%; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: .76rem; text-transform: uppercase; letter-spacing: .3px; }
+    tr:hover td { background: rgba(127,140,170,.06); }
+    .chip { display: inline-block; padding: .12rem .5rem; border-radius: 999px; font-size: .74rem;
+      font-weight: 600; background: var(--chip); }
+    .st { padding: .12rem .5rem; border-radius: 999px; font-size: .74rem; font-weight: 700; }
+    .st-RUNNING { background: rgba(79,140,255,.18); color: var(--accent); }
+    .st-PENDING, .st-QUEUED { background: rgba(245,181,68,.18); color: var(--warn); }
+    .st-SUCCEEDED, .st-COMPLETED { background: rgba(53,195,125,.18); color: var(--ok); }
+    .st-FAILED, .st-CANCELLED { background: rgba(255,92,108,.18); color: var(--err); }
+    .muted { color: var(--muted); }
+    .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin-bottom: 1rem; }
+    .mono { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: .82rem; }
+    #toast {
+      position: fixed; bottom: 1.2rem; right: 1.2rem; display: flex; flex-direction: column;
+      gap: .5rem; z-index: 50; max-width: 380px;
+    }
+    .toast {
+      background: var(--panel); border: 1px solid var(--border); border-left-width: 4px;
+      border-radius: 10px; padding: .7rem .9rem; box-shadow: 0 8px 30px rgba(0,0,0,.3);
+      animation: slidein .2s ease; font-size: .85rem;
+    }
+    .toast.ok { border-left-color: var(--ok); }
+    .toast.err { border-left-color: var(--err); }
+    .toast.info { border-left-color: var(--accent); }
+    @keyframes slidein { from { transform: translateX(20px); opacity: 0; } }
+    details.result { margin-top: .6rem; }
+    details.result pre {
+      background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+      padding: .7rem; overflow: auto; max-height: 260px; margin: .4rem 0 0;
+    }
+    .empty { color: var(--muted); text-align: center; padding: 2rem 1rem; }
+    .live-log {
+      background: #0a0e17; color: #b8f0c8; border: 1px solid var(--border); border-radius: 8px;
+      padding: .6rem; height: 200px; overflow: auto; font-family: ui-monospace, monospace;
+      font-size: .78rem; white-space: pre-wrap;
+    }
+    .badge-ver { cursor: pointer; }
+    .actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">JO</div>
+    <h1>JMeter Orchestrator</h1>
+    <span class="chip" id="healthChip">·</span>
+    <div class="spacer"></div>
+    <div class="user-box">
+      <label for="user">Usuario (X-User)</label>
+      <input id="user" style="width:130px" placeholder="ana">
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="scripts" class="active">Scripts</button>
+    <button data-tab="presets">Presets</button>
+    <button data-tab="executions">Ejecuciones</button>
+  </nav>
+
+  <main>
+    <!-- ================= SCRIPTS ================= -->
+    <section class="tab active" id="tab-scripts">
+      <div class="grid">
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Subir script .jmx</h2>
+            <div class="field">
+              <label>Nombre</label>
+              <input id="s-name" placeholder="demo">
+            </div>
+            <div class="field">
+              <label>Descripción (opcional)</label>
+              <input id="s-desc" placeholder="Prueba de humo">
+            </div>
+            <div class="field">
+              <label>Tags (opcional, coma)</label>
+              <input id="s-tags" placeholder="api,checkout">
+            </div>
+            <div class="field">
+              <label>Archivo .jmx</label>
+              <input id="s-file" type="file" accept=".jmx,.xml">
+            </div>
+            <button id="s-upload">Subir</button>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Scripts <button class="ghost sm" id="s-refresh" style="margin-left:auto">↻ Refrescar</button></h2>
+            <div id="scriptsList"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= PRESETS ================= -->
+    <section class="tab" id="tab-presets">
+      <div class="grid">
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Crear preset</h2>
+            <div class="field">
+              <label>Nombre</label>
+              <input id="p-name" placeholder="carga-baja">
+            </div>
+            <div class="field">
+              <label>Script</label>
+              <select id="p-script"></select>
+            </div>
+            <div class="row2">
+              <div class="field">
+                <label>Tipo</label>
+                <select id="p-type">
+                  <option>CARGA</option><option>ESTRES</option><option>PICO</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Entorno destino</label>
+                <input id="p-env" placeholder="dev">
+              </div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Hilos</label><input id="p-threads" type="number" value="10"></div>
+              <div class="field"><label>Nodos (pods)</label><input id="p-nodes" type="number" value="1"></div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Ramp-up (s)</label><input id="p-ramp" type="number" value="30"></div>
+              <div class="field"><label>Duración (s)</label><input id="p-dur" type="number" value="300"></div>
+            </div>
+            <div class="field"><label>Host destino</label><input id="p-host" placeholder="httpbin.org"></div>
+            <button id="p-create">Crear preset</button>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Presets <button class="ghost sm" id="p-refresh" style="margin-left:auto">↻ Refrescar</button></h2>
+            <div id="presetsList"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= EXECUTIONS ================= -->
+    <section class="tab" id="tab-executions">
+      <div class="grid">
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Lanzar ad-hoc</h2>
+            <div class="field">
+              <label>Versión de script</label>
+              <select id="e-version"></select>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Hilos</label><input id="e-threads" type="number" value="10"></div>
+              <div class="field"><label>Nodos (pods)</label><input id="e-nodes" type="number" value="1"></div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Ramp-up (s)</label><input id="e-ramp" type="number" value="30"></div>
+              <div class="field"><label>Duración (s)</label><input id="e-dur" type="number" value="120"></div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Protocolo</label>
+                <select id="e-proto"><option>https</option><option>http</option></select>
+              </div>
+              <div class="field"><label>Host destino</label><input id="e-host" placeholder="httpbin.org"></div>
+            </div>
+            <button id="e-launch">Lanzar ejecución</button>
+            <p class="muted" style="font-size:.78rem;margin:.7rem 0 0">
+              Requiere un cluster K8s accesible. Sin cluster, la ejecución queda en <b>FAILED</b>.
+            </p>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <h2><span class="dot"></span>Historial
+              <button class="ghost sm" id="e-refresh" style="margin-left:auto">↻ Refrescar</button></h2>
+            <div class="toolbar">
+              <div class="field" style="margin:0">
+                <label>Estado</label>
+                <select id="f-status">
+                  <option value="">(todos)</option>
+                  <option>PENDING</option><option>RUNNING</option><option>SUCCEEDED</option>
+                  <option>FAILED</option><option>CANCELLED</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0">
+                <label>ScriptVersion id</label>
+                <input id="f-version" type="number" style="width:120px" placeholder="—">
+              </div>
+              <button class="ghost sm" id="f-apply">Filtrar</button>
+            </div>
+            <div id="execList"></div>
+          </div>
+          <div class="card" id="liveCard" style="display:none">
+            <h2><span class="dot"></span>Progreso en vivo · ejecución <span id="liveId"></span>
+              <button class="ghost sm" id="liveStop" style="margin-left:auto">Detener</button></h2>
+            <div class="live-log" id="liveLog"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = (p) => p; // same origin
+const userVal = () => ($('#user').value || 'anonymous').trim();
+
+// --- persist user ---
+$('#user').value = localStorage.getItem('jo-user') || 'ana';
+$('#user').addEventListener('change', () => localStorage.setItem('jo-user', $('#user').value));
+
+// --- toast ---
+function toast(msg, kind='info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.textContent = msg;
+  $('#toast').appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+// --- fetch helper ---
+async function req(path, opts={}) {
+  opts.headers = Object.assign({ 'X-User': userVal() }, opts.headers || {});
+  const res = await fetch(api(path), opts);
+  const ct = res.headers.get('content-type') || '';
+  let body = null;
+  if (ct.includes('application/json')) body = await res.json().catch(() => null);
+  else body = await res.text().catch(() => null);
+  if (!res.ok) {
+    const msg = (body && body.error) ? body.error : (typeof body === 'string' ? body : res.statusText);
+    throw new Error('HTTP ' + res.status + ' · ' + msg);
+  }
+  return body;
+}
+
+// --- tabs ---
+document.querySelectorAll('nav.tabs button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    $('#tab-' + b.dataset.tab).classList.add('active');
+    if (b.dataset.tab === 'presets') { loadScriptsInto('#p-script'); loadPresets(); }
+    if (b.dataset.tab === 'executions') { loadVersionsInto('#e-version'); loadExecutions(); }
+  });
+});
+
+const fmt = (t) => t ? new Date(t).toLocaleString() : '—';
+const st = (s) => `<span class="st st-${s}">${s}</span>`;
+
+// ================= SCRIPTS =================
+async function loadScripts() {
+  const box = $('#scriptsList');
+  box.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const list = await req('/api/scripts');
+    if (!list.length) { box.innerHTML = '<div class="empty">No hay scripts. Sube el primero.</div>'; return; }
+    box.innerHTML = list.map(s => `
+      <div class="card" style="margin-bottom:.7rem;background:var(--panel2)">
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <b>#${s.id} · ${esc(s.name)}</b>
+          ${s.tags ? `<span class="chip">${esc(s.tags)}</span>` : ''}
+          <span class="muted" style="margin-left:auto;font-size:.78rem">por ${esc(s.createdBy||'—')} · ${fmt(s.createdAt)}</span>
+        </div>
+        ${s.description ? `<div class="muted" style="font-size:.82rem;margin-top:.2rem">${esc(s.description)}</div>` : ''}
+        <div id="vers-${s.id}" style="margin-top:.6rem"></div>
+      </div>`).join('');
+    for (const s of list) loadVersions(s.id);
+  } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
+}
+async function loadVersions(scriptId) {
+  const el = $('#vers-' + scriptId);
+  try {
+    const vs = await req('/api/scripts/' + scriptId + '/versions');
+    if (!vs.length) { el.innerHTML = '<span class="muted" style="font-size:.8rem">Sin versiones</span>'; return; }
+    el.innerHTML = `<table><thead><tr><th>Ver</th><th>Checksum</th><th>Autor</th><th>Acciones</th></tr></thead><tbody>${
+      vs.map(v => `<tr>
+        <td><span class="chip">v${v.versionNumber}</span></td>
+        <td class="mono">${(v.checksumSha256||'').slice(0,12)}…</td>
+        <td>${esc(v.createdBy||'—')}</td>
+        <td class="actions">
+          <button class="ghost sm" onclick="validate(${scriptId},${v.versionNumber},this)">Validar</button>
+          <button class="ghost sm" onclick="pretest(${scriptId},${v.versionNumber},this)">Pre-test</button>
+        </td></tr>
+        <tr id="valrow-${scriptId}-${v.versionNumber}" style="display:none"><td colspan="4"></td></tr>`).join('')
+    }</tbody></table>`;
+  } catch (e) { el.innerHTML = `<span class="muted">Error versiones: ${esc(e.message)}</span>`; }
+}
+async function validate(sid, ver, btn) {
+  btn.disabled = true;
+  try {
+    const r = await req(`/api/scripts/${sid}/versions/${ver}/validate`, { method: 'POST' });
+    const row = $(`#valrow-${sid}-${ver}`); row.style.display = '';
+    const color = r.valid ? 'var(--ok)' : 'var(--err)';
+    row.firstElementChild.innerHTML = `
+      <b style="color:${color}">${r.valid ? '✓ Válido' : '✗ Inválido'}</b>
+      ${r.errors && r.errors.length ? `<div class="muted">Errores: ${r.errors.map(esc).join('; ')}</div>` : ''}
+      ${r.warnings && r.warnings.length ? `<div class="muted">Avisos: ${r.warnings.map(esc).join('; ')}</div>` : ''}`;
+    toast(r.valid ? 'Versión válida' : 'Versión inválida', r.valid ? 'ok' : 'err');
+  } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; }
+}
+async function pretest(sid, ver, btn) {
+  btn.disabled = true;
+  try {
+    const e = await req(`/api/scripts/${sid}/versions/${ver}/pretest`, { method: 'POST' });
+    toast('Pre-test lanzado · ejecución #' + e.id + ' (' + e.status + ')', 'ok');
+    streamExecution(e.id);
+  } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
+}
+$('#s-upload').addEventListener('click', async () => {
+  const f = $('#s-file').files[0];
+  if (!f) { toast('Selecciona un archivo .jmx', 'err'); return; }
+  const fd = new FormData();
+  fd.append('name', $('#s-name').value || f.name);
+  if ($('#s-desc').value) fd.append('description', $('#s-desc').value);
+  if ($('#s-tags').value) fd.append('tags', $('#s-tags').value);
+  fd.append('file', f);
+  try {
+    const v = await req('/api/scripts', { method: 'POST', body: fd });
+    toast('Script subido · versión #' + v.id, 'ok');
+    $('#s-name').value = ''; $('#s-desc').value = ''; $('#s-tags').value = ''; $('#s-file').value = '';
+    loadScripts();
+  } catch (e) { toast(e.message, 'err'); }
+});
+$('#s-refresh').addEventListener('click', loadScripts);
+
+// ================= PRESETS =================
+async function loadScriptsInto(sel) {
+  try {
+    const list = await req('/api/scripts');
+    $(sel).innerHTML = list.map(s => `<option value="${s.id}">#${s.id} · ${esc(s.name)}</option>`).join('')
+      || '<option value="">(sin scripts)</option>';
+  } catch (e) { $(sel).innerHTML = '<option value="">error</option>'; }
+}
+async function loadPresets() {
+  const box = $('#presetsList');
+  box.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const list = await req('/api/presets');
+    if (!list.length) { box.innerHTML = '<div class="empty">No hay presets.</div>'; return; }
+    box.innerHTML = `<table><thead><tr><th>Nombre</th><th>Script</th><th>Tipo</th><th>Params</th><th></th></tr></thead><tbody>${
+      list.map(p => `<tr>
+        <td><b>${esc(p.name)}</b><div class="muted" style="font-size:.75rem">${esc(p.targetEnv||'')}</div></td>
+        <td>#${p.scriptId}</td>
+        <td><span class="chip">${p.testType}</span></td>
+        <td class="mono" style="font-size:.75rem">${esc(JSON.stringify(p.parameters||{}))}</td>
+        <td class="actions">
+          <button class="sm" onclick="launchPreset(${p.id},this)">Lanzar</button>
+          <button class="ghost sm" onclick="delPreset(${p.id})">🗑</button>
+        </td></tr>`).join('')
+    }</tbody></table>`;
+  } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
+}
+$('#p-create').addEventListener('click', async () => {
+  const body = {
+    name: $('#p-name').value,
+    scriptId: Number($('#p-script').value) || null,
+    testType: $('#p-type').value,
+    targetEnv: $('#p-env').value || null,
+    parameters: {
+      threads: Number($('#p-threads').value),
+      rampUp: Number($('#p-ramp').value),
+      duration: Number($('#p-dur').value),
+      nodes: Number($('#p-nodes').value),
+      targetHost: $('#p-host').value || null
+    }
+  };
+  try {
+    await req('/api/presets', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Preset creado', 'ok'); $('#p-name').value = ''; loadPresets();
+  } catch (e) { toast(e.message, 'err'); }
+});
+async function launchPreset(id, btn) {
+  btn.disabled = true;
+  try {
+    const e = await req(`/api/presets/${id}/launch`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ overrides: {} }) });
+    toast('Lanzado desde preset · ejecución #' + e.id + ' (' + e.status + ')', 'ok');
+    switchTo('executions'); streamExecution(e.id);
+  } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
+}
+async function delPreset(id) {
+  try { await req('/api/presets/' + id, { method: 'DELETE' }); toast('Preset eliminado', 'ok'); loadPresets(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+$('#p-refresh').addEventListener('click', () => { loadScriptsInto('#p-script'); loadPresets(); });
+
+// ================= EXECUTIONS =================
+async function loadVersionsInto(sel) {
+  try {
+    const scripts = await req('/api/scripts');
+    const opts = [];
+    for (const s of scripts) {
+      const vs = await req('/api/scripts/' + s.id + '/versions');
+      for (const v of vs) opts.push(`<option value="${v.id}">${esc(s.name)} · v${v.versionNumber} (verId ${v.id})</option>`);
+    }
+    $(sel).innerHTML = opts.join('') || '<option value="">(sin versiones)</option>';
+  } catch (e) { $(sel).innerHTML = '<option value="">error</option>'; }
+}
+$('#e-launch').addEventListener('click', async () => {
+  const vid = Number($('#e-version').value);
+  if (!vid) { toast('Selecciona una versión', 'err'); return; }
+  const body = { scriptVersionId: vid, parameters: {
+    threads: Number($('#e-threads').value), rampUp: Number($('#e-ramp').value),
+    duration: Number($('#e-dur').value), nodes: Number($('#e-nodes').value),
+    targetProtocol: $('#e-proto').value, targetHost: $('#e-host').value || null
+  }};
+  try {
+    const e = await req('/api/executions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Ejecución #' + e.id + ' lanzada (' + e.status + ')', 'ok');
+    loadExecutions(); streamExecution(e.id);
+  } catch (err) { toast(err.message, 'err'); }
+});
+async function loadExecutions() {
+  const box = $('#execList');
+  box.innerHTML = '<div class="empty">Cargando…</div>';
+  const qs = new URLSearchParams();
+  if ($('#f-status').value) qs.set('estado', $('#f-status').value);
+  if ($('#f-version').value) qs.set('scriptVersion', $('#f-version').value);
+  try {
+    const list = await req('/api/executions' + (qs.toString() ? '?' + qs : ''));
+    if (!list.length) { box.innerHTML = '<div class="empty">Sin ejecuciones.</div>'; return; }
+    box.innerHTML = `<table><thead><tr><th>#</th><th>Estado</th><th>Nodos</th><th>Lanzada</th><th>Acciones</th></tr></thead><tbody>${
+      list.map(e => `<tr>
+        <td><b>#${e.id}</b><div class="muted" style="font-size:.72rem">ver ${e.scriptVersionId ?? '—'}</div></td>
+        <td>${st(e.status)}${e.errorMessage ? `<div class="muted" style="font-size:.72rem">${esc(e.errorMessage).slice(0,60)}</div>` : ''}</td>
+        <td>${e.nodes ?? '—'}</td>
+        <td class="muted" style="font-size:.78rem">${fmt(e.createdAt)}<br>por ${esc(e.launchedBy||'—')}</td>
+        <td class="actions">
+          <button class="ghost sm" onclick="showExec(${e.id})">Detalle</button>
+          <button class="ghost sm" onclick="streamExecution(${e.id})">En vivo</button>
+          <button class="ghost sm" onclick="window.open('/api/executions/${e.id}/report','_blank')">Reporte</button>
+          <button class="ghost sm" onclick="relaunch(${e.id})">Relanzar</button>
+          ${['RUNNING','PENDING','QUEUED'].includes(e.status) ? `<button class="ghost sm" onclick="cancelExec(${e.id})">Cancelar</button>` : ''}
+        </td></tr>
+        <tr id="execrow-${e.id}" style="display:none"><td colspan="5"></td></tr>`).join('')
+    }</tbody></table>`;
+  } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
+}
+async function showExec(id) {
+  const row = $('#execrow-' + id);
+  if (row.style.display === '') { row.style.display = 'none'; return; }
+  row.style.display = '';
+  row.firstElementChild.innerHTML = '<span class="muted">Cargando…</span>';
+  try {
+    const e = await req('/api/executions/' + id);
+    row.firstElementChild.innerHTML = `
+      <div class="row2" style="grid-template-columns:1fr 1fr">
+        <div><b>Parámetros</b><pre class="mono" style="background:var(--panel2);padding:.5rem;border-radius:6px;overflow:auto">${esc(JSON.stringify(e.parameters||{},null,2))}</pre></div>
+        <div><b>Resumen métricas</b><pre class="mono" style="background:var(--panel2);padding:.5rem;border-radius:6px;overflow:auto">${esc(JSON.stringify(e.summary||{},null,2))}</pre></div>
+      </div>
+      ${e.nodesDetail && e.nodesDetail.length ? `<b>Nodos</b><table><thead><tr><th>idx</th><th>pod</th><th>estado</th><th>exit</th></tr></thead><tbody>${
+        e.nodesDetail.map(n => `<tr><td>${n.nodeIndex}</td><td class="mono">${esc(n.podName||'—')}</td><td>${st(n.status)}</td><td>${n.exitCode ?? '—'}</td></tr>`).join('')
+      }</tbody></table>` : ''}`;
+  } catch (err) { row.firstElementChild.innerHTML = `<span class="muted">Error: ${esc(err.message)}</span>`; }
+}
+async function cancelExec(id) {
+  try { await req('/api/executions/' + id + '/cancel', { method: 'POST' }); toast('Cancelación solicitada', 'ok'); loadExecutions(); }
+  catch (e) { toast(e.message, 'err'); }
+}
+async function relaunch(id) {
+  try { const e = await req('/api/executions/' + id + '/relaunch', { method: 'POST' }); toast('Relanzada como #' + e.id, 'ok'); loadExecutions(); streamExecution(e.id); }
+  catch (err) { toast(err.message, 'err'); }
+}
+$('#e-refresh').addEventListener('click', loadExecutions);
+$('#f-apply').addEventListener('click', loadExecutions);
+
+// --- SSE live stream ---
+let evtSrc = null;
+function streamExecution(id) {
+  if (evtSrc) evtSrc.close();
+  $('#liveCard').style.display = '';
+  $('#liveId').textContent = '#' + id;
+  const log = $('#liveLog'); log.textContent = '';
+  const push = (t) => { log.textContent += t + '\n'; log.scrollTop = log.scrollHeight; };
+  push('Conectando al stream de la ejecución #' + id + '…');
+  evtSrc = new EventSource('/api/executions/' + id + '/stream');
+  evtSrc.onmessage = (m) => {
+    try { const d = JSON.parse(m.data); push(JSON.stringify(d)); }
+    catch { push(m.data); }
+  };
+  evtSrc.onerror = () => { push('— stream cerrado —'); evtSrc.close(); loadExecutions(); };
+}
+$('#liveStop').addEventListener('click', () => { if (evtSrc) evtSrc.close(); $('#liveCard').style.display = 'none'; });
+
+// --- utils ---
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function switchTo(tab) { document.querySelector(`nav.tabs button[data-tab="${tab}"]`).click(); }
+
+// --- health ---
+async function health() {
+  try {
+    const h = await fetch('/q/health').then(r => r.json());
+    const up = h.status === 'UP';
+    $('#healthChip').textContent = up ? '● online' : '● ' + h.status;
+    $('#healthChip').style.color = up ? 'var(--ok)' : 'var(--err)';
+  } catch { $('#healthChip').textContent = '● offline'; $('#healthChip').style.color = 'var(--err)'; }
+}
+
+// --- init ---
+health(); setInterval(health, 15000);
+loadScripts();
+</script>
+</body>
+</html>

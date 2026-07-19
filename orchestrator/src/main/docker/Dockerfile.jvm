@@ -1,0 +1,19 @@
+# =====================================================================
+#  Imagen JVM del orquestador (Quarkus fast-jar).
+#  Construir primero: mvn package -DskipTests  (genera target/quarkus-app)
+#  Build en minikube:  minikube image build -t jmeter-orchestrator:0.1.0 \
+#                        -f src/main/docker/Dockerfile.jvm .
+# =====================================================================
+FROM eclipse-temurin:21-jre-jammy
+
+ENV LANG=C.UTF-8
+WORKDIR /work
+
+# Layout fast-jar de Quarkus: primero libs (capa estable), luego la app.
+COPY target/quarkus-app/lib/      /work/lib/
+COPY target/quarkus-app/*.jar     /work/
+COPY target/quarkus-app/app/      /work/app/
+COPY target/quarkus-app/quarkus/  /work/quarkus/
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/work/quarkus-run.jar"]
