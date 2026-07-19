@@ -116,7 +116,25 @@ public class WorkerPoolService {
 
         Execution exec = Execution.findById(candidate.executionId);
         ExecParams ep = new ExecParams(exec.effectiveParams);
-        int threads = threadsForShard(ep.threads(), exec.nodes, candidate.nodeIndex);
+
+        // Reparto por shard. En modo RPS (rampa por Throughput Shaping Timer) el RPS
+        // es la carga y se reparte entre shards (la suma da el pico); los hilos NO se
+        // reparten: cada worker recibe el pool completo como techo. En modo hilos,
+        // se reparten los hilos como siempre.
+        int threads;
+        int duration;
+        String extra = ep.extraProps();
+        if (ep.isRpsMode()) {
+            threads = ep.threads();
+            int peakShare = threadsForShard(ep.peakRps(), exec.nodes, candidate.nodeIndex);
+            int startShare = ep.startRps() > 0 ? threadsForShard(ep.startRps(), exec.nodes, candidate.nodeIndex) : 0;
+            duration = ep.rampSeconds() + ep.holdSeconds();
+            extra = (extra + " -JstartRps=" + startShare + " -JpeakRps=" + peakShare
+                    + " -JrampSeconds=" + ep.rampSeconds() + " -JholdSeconds=" + ep.holdSeconds()).trim();
+        } else {
+            threads = threadsForShard(ep.threads(), exec.nodes, candidate.nodeIndex);
+            duration = ep.duration();
+        }
 
         // Start-gate: si ya no quedan shards PENDING, fijamos el arranque comun.
         Instant startAt = exec.startAt;
@@ -134,12 +152,13 @@ public class WorkerPoolService {
             // Si no ganamos el flip, otro worker lo fijo: el nuestro lo descubrira por heartbeat.
         }
 
-        Log.infof("Shard reclamado: exec=%d idx=%d worker=%s threads=%d",
-                exec.id, candidate.nodeIndex, req.workerId(), threads);
+        Log.infof("Shard reclamado: exec=%d idx=%d worker=%s threads=%d%s",
+                exec.id, candidate.nodeIndex, req.workerId(), threads,
+                ep.isRpsMode() ? " rpsMode(peak/shard=" + threadsForShard(ep.peakRps(), exec.nodes, candidate.nodeIndex) + ")" : "");
         ShardAssignment a = new ShardAssignment(
                 exec.id, candidate.nodeIndex, exec.nodes, exec.scriptVersionId,
-                threads, ep.rampUp(), ep.duration(), ep.targetHost(), ep.targetProtocol(),
-                ep.extraProps(), startAt);
+                threads, ep.rampUp(), duration, ep.targetHost(), ep.targetProtocol(),
+                extra, startAt);
         return ClaimOutcome.claimed(a);
     }
 

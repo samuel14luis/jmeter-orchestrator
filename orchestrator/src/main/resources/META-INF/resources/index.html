@@ -237,6 +237,16 @@
               <div class="field"><label>Duración (s)</label><input id="p-dur" type="number" value="300"></div>
             </div>
             <div class="field"><label>Host destino</label><input id="p-host" placeholder="httpbin.org"></div>
+            <details class="result" style="margin:.2rem 0 .6rem">
+              <summary class="muted">Rampa por RPS objetivo (opcional)</summary>
+              <p class="muted" style="font-size:.75rem;margin:.4rem 0">Requiere script con Throughput Shaping Timer (plantilla rps-ramp.jmx).</p>
+              <div class="row2">
+                <div class="field"><label>RPS inicial</label><input id="p-startrps" type="number" placeholder="0"></div>
+                <div class="field"><label>RPS pico</label><input id="p-peakrps" type="number" placeholder="—"></div>
+                <div class="field"><label>Rampa (s)</label><input id="p-rampsecs" type="number" placeholder="30"></div>
+                <div class="field"><label>Hold (s)</label><input id="p-holdsecs" type="number" placeholder="60"></div>
+              </div>
+            </details>
             <button id="p-create">Crear preset</button>
           </div>
         </div>
@@ -273,9 +283,24 @@
               </div>
               <div class="field"><label>Host destino</label><input id="e-host" placeholder="httpbin.org"></div>
             </div>
+            <details class="result" style="margin:.2rem 0 .6rem">
+              <summary class="muted">Rampa por RPS objetivo (opcional)</summary>
+              <p class="muted" style="font-size:.75rem;margin:.4rem 0">
+                Requiere un script con Throughput Shaping Timer (usa la plantilla
+                <b>rps-ramp.jmx</b>). Sube de RPS inicial a pico durante la rampa y
+                mantiene el pico. El pico se reparte entre los nodos (la suma da el total).
+              </p>
+              <div class="row2">
+                <div class="field"><label>RPS inicial</label><input id="e-startrps" type="number" placeholder="0"></div>
+                <div class="field"><label>RPS pico</label><input id="e-peakrps" type="number" placeholder="—"></div>
+                <div class="field"><label>Rampa (s)</label><input id="e-rampsecs" type="number" placeholder="30"></div>
+                <div class="field"><label>Hold (s)</label><input id="e-holdsecs" type="number" placeholder="60"></div>
+              </div>
+            </details>
             <button id="e-launch">Lanzar ejecución</button>
             <p class="muted" style="font-size:.78rem;margin:.7rem 0 0">
-              Requiere un cluster K8s accesible. Sin cluster, la ejecución queda en <b>FAILED</b>.
+              Sin workers disponibles, la ejecución espera en <b>PENDING</b> y se marca
+              <b>FAILED</b> si no se reúnen a tiempo.
             </p>
           </div>
         </div>
@@ -572,18 +597,20 @@ async function loadPresets() {
   } catch (e) { box.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
 }
 $('#p-create').addEventListener('click', async () => {
+  const params = {
+    threads: Number($('#p-threads').value),
+    rampUp: Number($('#p-ramp').value),
+    duration: Number($('#p-dur').value),
+    nodes: Number($('#p-nodes').value),
+    targetHost: $('#p-host').value || null
+  };
+  addRpsParams(params, { peak:'#p-peakrps', start:'#p-startrps', ramp:'#p-rampsecs', hold:'#p-holdsecs' });
   const body = {
     name: $('#p-name').value,
     scriptId: Number($('#p-script').value) || null,
     testType: $('#p-type').value,
     targetEnv: $('#p-env').value || null,
-    parameters: {
-      threads: Number($('#p-threads').value),
-      rampUp: Number($('#p-ramp').value),
-      duration: Number($('#p-dur').value),
-      nodes: Number($('#p-nodes').value),
-      targetHost: $('#p-host').value || null
-    }
+    parameters: params
   };
   try {
     await req('/api/presets', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -619,6 +646,15 @@ function editPreset(id) {
       <div class="field"><label>Host destino</label><input id="pe-host" value="${esc(pr.targetHost||'')}"></div>
       <div class="field"><label>Entorno</label><input id="pe-env" value="${esc(p.targetEnv||'')}"></div>
     </div>
+    <details class="result" ${pr.peakRps?'open':''} style="margin:.2rem 0 .4rem">
+      <summary class="muted">Rampa por RPS objetivo (opcional)</summary>
+      <div class="row2">
+        <div class="field"><label>RPS inicial</label><input id="pe-startrps" type="number" value="${pr.startRps??''}"></div>
+        <div class="field"><label>RPS pico</label><input id="pe-peakrps" type="number" value="${pr.peakRps??''}"></div>
+        <div class="field"><label>Rampa (s)</label><input id="pe-rampsecs" type="number" value="${pr.rampSeconds??''}"></div>
+        <div class="field"><label>Hold (s)</label><input id="pe-holdsecs" type="number" value="${pr.holdSeconds??''}"></div>
+      </div>
+    </details>
     <div class="modal-actions">
       <button class="ghost" onclick="closeModal()">Cancelar</button>
       <button onclick="savePreset(${id},this)">Guardar cambios</button>
@@ -627,13 +663,12 @@ function editPreset(id) {
 async function savePreset(id, btn) {
   btn.disabled = true;
   const g = k => $(`#pe-${k}`).value;
-  const body = {
-    name: g('name'), testType: g('type'), targetEnv: g('env') || null,
-    parameters: {
-      threads: Number(g('threads')), nodes: Number(g('nodes')),
-      rampUp: Number(g('ramp')), duration: Number(g('dur')), targetHost: g('host') || null
-    }
+  const params = {
+    threads: Number(g('threads')), nodes: Number(g('nodes')),
+    rampUp: Number(g('ramp')), duration: Number(g('dur')), targetHost: g('host') || null
   };
+  addRpsParams(params, { peak:'#pe-peakrps', start:'#pe-startrps', ramp:'#pe-rampsecs', hold:'#pe-holdsecs' });
+  const body = { name: g('name'), testType: g('type'), targetEnv: g('env') || null, parameters: params };
   try {
     await req('/api/presets/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     closeModal(); toast('Preset actualizado', 'ok'); loadPresets();
@@ -659,14 +694,27 @@ async function loadVersionsInto(sel) {
     $(sel).innerHTML = opts.join('') || '<option value="">(sin versiones)</option>';
   } catch (e) { $(sel).innerHTML = '<option value="">error</option>'; }
 }
+// Añade los parámetros de rampa RPS a un objeto de parámetros si hay pico definido.
+function addRpsParams(params, ids) {
+  const peak = Number($(ids.peak).value);
+  if (peak > 0) {
+    params.peakRps = peak;
+    params.startRps = Number($(ids.start).value) || 0;
+    params.rampSeconds = Number($(ids.ramp).value) || 30;
+    params.holdSeconds = Number($(ids.hold).value) || 60;
+  }
+  return params;
+}
 $('#e-launch').addEventListener('click', async () => {
   const vid = Number($('#e-version').value);
   if (!vid) { toast('Selecciona una versión', 'err'); return; }
-  const body = { scriptVersionId: vid, parameters: {
+  const params = {
     threads: Number($('#e-threads').value), rampUp: Number($('#e-ramp').value),
     duration: Number($('#e-dur').value), nodes: Number($('#e-nodes').value),
     targetProtocol: $('#e-proto').value, targetHost: $('#e-host').value || null
-  }};
+  };
+  addRpsParams(params, { peak:'#e-peakrps', start:'#e-startrps', ramp:'#e-rampsecs', hold:'#e-holdsecs' });
+  const body = { scriptVersionId: vid, parameters: params };
   try {
     const e = await req('/api/executions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     toast('Ejecución #' + e.id + ' lanzada (' + e.status + ')', 'ok');

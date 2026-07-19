@@ -23,16 +23,22 @@ RUN set -eux; \
     tar -xzf /tmp/jmeter.tgz -C /opt; \
     rm /tmp/jmeter.tgz
 
-# Plugins Manager + cmdrunner + plugins comunes
+# Plugins Manager + cmdrunner + plugins comunes.
+#  · jpgc-tst    = Throughput Shaping Timer (rampa por RPS objetivo, Fase RPS)
+#  · jpgc-casutg = Custom Thread Groups (Stepping/Concurrency/Ultimate)
+# La lista de 'install' va SEPARADA POR COMAS (con espacios PluginsManagerCMD no
+# instala nada). Sin '|| true': si la descarga falla, el build DEBE fallar; y
+# verificamos que el jar del TST realmente quedó en lib/ext.
 RUN set -eux; \
     curl -fsSL "https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-manager/${PLUGINS_MANAGER_VERSION}/jmeter-plugins-manager-${PLUGINS_MANAGER_VERSION}.jar" \
       -o "${JMETER_HOME}/lib/ext/jmeter-plugins-manager.jar"; \
     curl -fsSL "https://repo1.maven.org/maven2/kg/apc/cmdrunner/${CMDRUNNER_VERSION}/cmdrunner-${CMDRUNNER_VERSION}.jar" \
-      -o "${JMETER_HOME}/lib/cmdrunner.jar"; \
+      -o "${JMETER_HOME}/lib/cmdrunner-${CMDRUNNER_VERSION}.jar"; \
     java -cp "${JMETER_HOME}/lib/ext/jmeter-plugins-manager.jar" \
       org.jmeterplugins.repository.PluginManagerCMDInstaller; \
-    "${JMETER_HOME}/bin/PluginsManagerCMD.sh" install \
-      jpgc-casutg jpgc-tst jpgc-dummy jpgc-functions || true
+    "${JMETER_HOME}/bin/PluginsManagerCMD.sh" install jpgc-casutg,jpgc-tst,jpgc-dummy,jpgc-functions; \
+    ls "${JMETER_HOME}/lib/ext/" | grep -Eiq 'tst|ThroughputShaping' \
+      || (echo "ERROR: el plugin Throughput Shaping Timer (jpgc-tst) no se instalo" && exit 1)
 
 # Ajuste de memoria por defecto (se recomienda mas pods con menos hilos, seccion 12)
 ENV JVM_ARGS="-Xms512m -Xmx1536m"

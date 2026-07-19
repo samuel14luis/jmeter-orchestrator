@@ -16,6 +16,12 @@ public final class ExecParams {
     public static final String TARGET_HOST = "targetHost";
     public static final String TARGET_PROTOCOL = "targetProtocol";
     public static final String EXTRA_PROPS = "extraProps";
+    // Rampa por RPS objetivo (plantilla rps-ramp.jmx). La presencia de peakRps
+    // activa el "modo RPS": el orquestador reparte start/peak entre shards.
+    public static final String START_RPS = "startRps";
+    public static final String PEAK_RPS = "peakRps";
+    public static final String RAMP_SECONDS = "rampSeconds";
+    public static final String HOLD_SECONDS = "holdSeconds";
 
     private final Map<String, Object> params;
 
@@ -45,6 +51,30 @@ public final class ExecParams {
 
     public String targetProtocol() {
         return asString(TARGET_PROTOCOL, "https");
+    }
+
+    // ---- Rampa por RPS objetivo ----
+
+    /** true si esta ejecucion usa rampa por RPS (hay peakRps definido y > 0). */
+    public boolean isRpsMode() {
+        Object v = params.get(PEAK_RPS);
+        return v != null && asInt(PEAK_RPS, 0) > 0;
+    }
+
+    public int startRps() {
+        return asInt(START_RPS, 0);
+    }
+
+    public int peakRps() {
+        return asInt(PEAK_RPS, 0);
+    }
+
+    public int rampSeconds() {
+        return asInt(RAMP_SECONDS, 30);
+    }
+
+    public int holdSeconds() {
+        return asInt(HOLD_SECONDS, 60);
     }
 
     /** Propiedades -J adicionales ya formateadas como cadena "-Jk=v -Jk2=v2". */
