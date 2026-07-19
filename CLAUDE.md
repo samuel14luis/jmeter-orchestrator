@@ -67,6 +67,9 @@ worker/           Dockerfile (JMeter 5.6.3 + plugins + jq) + agent.sh (agente pu
 deploy/pool/      Topología worker-pool: 00-namespace, 10-orchestrator, 20-worker, README
 deploy/monitoring/ y deploy/target-api/   SOLO demo local (Grafana/InfluxDB/Prometheus, SUT)
 scripts-plantilla/ base.jmx parametrizado con __P()  (OJO: golpea '/'; usar /api/fast en el SUT)
+                   rps-ramp.jmx: rampa por RPS objetivo (Throughput Shaping Timer,
+                   plugin jpgc-tst). Params: startRps,peakRps,rampSeconds,holdSeconds.
+                   El orquestador reparte el pico de RPS entre shards (la suma = pico)
 ```
 
 ## Decisiones de diseño importantes (no romper)
@@ -78,6 +81,11 @@ scripts-plantilla/ base.jmx parametrizado con __P()  (OJO: golpea '/'; usar /api
   obtienen el mismo shard). El reparto de hilos se resuelve en el servidor (base + 1
   para los primeros `total % shards`). Start-gate común cuando todos los shards están
   reclamados. La coordinación es la BD; no hay líder.
+- **Modo RPS (rampa por Throughput Shaping Timer)**: si el preset/ejecución trae
+  `peakRps>0`, `WorkerPoolService` reparte el pico de RPS entre shards (el RPS es
+  aditivo → la suma da el pico), NO reparte hilos (son solo techo), fija
+  `duration=rampSeconds+holdSeconds` e inyecta `-JstartRps/-JpeakRps/...` en
+  `extraProps` (que ya fluye al agente). Requiere la plantilla `rps-ramp.jmx`.
 - **Resultados por HTTP, sin volumen compartido**: el worker sube `jtl.gz`+log a
   `/internal/shards/{id}/{idx}/results`; el orquestador los guarda en SU almacén y el
   `JtlAggregator` los fusiona. El worker descarga el `.jmx` por HTTP (por versionId).
