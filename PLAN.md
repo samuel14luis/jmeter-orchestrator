@@ -378,10 +378,15 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
       si no el entrypoint legado de Jobs); Dockerfile con `jq`. **Verificado end-to-end
       con dos agentes reales contra el backend vivo** (JMeter stubbeado): claims de shard
       distintos, start-gate sincronizado, cierre COMPLETED con samples 4+4=8.
-- [ ] Manifiestos: Deployment `worker` (N réplicas) + Deployment `orchestrator`
-      (1 réplica); retirar el RBAC de Jobs
+- [x] Imagen del worker construida y validada (`docker build`, 440MB): `jq` + los tres
+      scripts + `jmeter`, shebang LF, ENTRYPOINT `/run.sh`.
+- [x] Manifiestos de la topología pool (`deploy/pool/`): namespace `jmeter-load` +
+      quota, orchestrator (1 réplica, PVC propio RWO, **sin ServiceAccount/RBAC de
+      Jobs**, engine=pool, token), jmeter-worker (N réplicas, `ORCHESTRATOR_URL` +
+      token, sin volumen), Service + README. Validados (estructura YAML). El RBAC de
+      Jobs simplemente no existe en este set.
 - [ ] Retirar `KubernetesJobService`/Fabric8 y el `entrypoint.sh` basado en
-      `JOB_COMPLETION_INDEX` cuando el pool esté validado
+      `JOB_COMPLETION_INDEX` (+ manifiestos legado `deploy/0X-*`) cuando el pool esté validado
 - [ ] **Validación en minikube (el objetivo declarado del entorno local)**: correr con
       1 shard y con 2+ shards contra `target-api` y verificar, con el resumen agregado
       del orquestador (no con Grafana), que los RPS por shard suman el total esperado

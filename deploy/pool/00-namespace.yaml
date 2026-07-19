@@ -1,0 +1,31 @@
+# =====================================================================
+#  Topologia worker-pool por pull (Fase 7). Namespace unico jmeter-load con
+#  dos microservicios: orchestrator (1 replica) y jmeter-worker (N replicas).
+#
+#  A diferencia del motor de Jobs, aqui NO hay PVC compartido entre servicios
+#  (los workers entregan resultados por HTTP) ni RBAC de Jobs (el orquestador
+#  no usa el API de Kubernetes en runtime). Co-ubicarlos en un namespace solo
+#  simplifica el Secret del token y el DNS del Service; podrian separarse en
+#  dos namespaces duplicando el Secret del token.
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jmeter-load
+  labels:
+    app.kubernetes.io/part-of: jmeter-orchestrator
+---
+# Acota el consumo del pool (seccion 10/12 del plan). Exige requests+limits en
+# TODO pod del namespace, que orchestrator y worker declaran.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: jmeter-load-quota
+  namespace: jmeter-load
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "60"

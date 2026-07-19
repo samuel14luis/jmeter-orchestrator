@@ -1,0 +1,112 @@
+# =====================================================================
+#  Orquestador (1 replica): UI + API publica + API interna de workers
+#  (/internal/*) + coordinacion de shards + agregacion. Motor pool.
+#
+#  · Sin ServiceAccount especial: en modo pool no llama al API de Kubernetes.
+#  · Almacen de artefactos PROPIO (PVC RWO): scripts, JTL por shard, merged, log.
+#    Los workers NO montan este volumen; entregan su JTL por HTTP.
+#  · La BD por defecto apunta al SQL Server del HOST (host.minikube.internal),
+#    como en la validacion local; sobrescribir DB_URL para otro entorno.
+# =====================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orchestrator-config
+  namespace: jmeter-load
+type: Opaque
+stringData:
+  DB_URL: "jdbc:sqlserver://host.minikube.internal:1433;databaseName=jmeter_orchestrator;encrypt=true;trustServerCertificate=true"
+  DB_USERNAME: "sa"
+  DB_PASSWORD: "Your_strong_Passw0rd"
+  ORCHESTRATOR_ENGINE: "pool"
+  # Token de servicio que autentica la API interna de workers. CAMBIAR en un
+  # entorno real y mantenerlo en sincronia con el que consumen los workers.
+  WORKER_TOKEN: "change-me-worker-token"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestrator-artifacts
+  namespace: jmeter-load
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: standard   # ajustar a la clase disponible en el cluster
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: jmeter-load
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # PVC RWO: nunca dos pods montandolo a la vez
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: jmeter-orchestrator:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: orchestrator-config
+          env:
+            - name: STORAGE_KIND
+              value: local
+            - name: STORAGE_BASE_DIR
+              value: /artifacts
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: orchestrator-artifacts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: jmeter-load
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  selector:
+    app.kubernetes.io/name: orchestrator
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

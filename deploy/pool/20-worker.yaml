@@ -1,0 +1,56 @@
+# =====================================================================
+#  Pool de workers JMeter (N replicas). Cada replica corre el agente pull
+#  (worker/agent.sh via run.sh, activado porque ORCHESTRATOR_URL esta definido):
+#  reclama shards, descarga el script, ejecuta jmeter -n, late y sube el JTL.
+#
+#  · Sin volumen ni RBAC: toda la coordinacion es HTTP a la API interna.
+#  · Escalar `replicas` >= al maximo numero de shards (nodes) de una prueba;
+#    si hay menos replicas que shards, los shards sobrantes esperan a que una
+#    replica quede libre (o vencen por pending-claim-timeout).
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jmeter-worker
+  namespace: jmeter-load
+  labels:
+    app.kubernetes.io/name: jmeter-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jmeter-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jmeter-worker
+    spec:
+      containers:
+        - name: jmeter-worker
+          image: jmeter-worker:5.6.3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ORCHESTRATOR_URL
+              value: "http://orchestrator.jmeter-load.svc.cluster.local"
+            - name: WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-config
+                  key: WORKER_TOKEN
+            - name: WORKER_VERSION
+              value: "5.6.3"
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name   # el nombre del pod como workerId
+            - name: POLL_INTERVAL
+              value: "5"
+            - name: HEARTBEAT_INTERVAL
+              value: "10"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
