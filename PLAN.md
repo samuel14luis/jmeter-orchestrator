@@ -6,14 +6,34 @@
 
 ## 0. Estado del proyecto (actualizado 2026-07-19)
 
-Las Fases 0–4 están **implementadas y probadas end-to-end** en minikube: API completa
-(scripts, versiones, validación, pre-test, presets, ejecuciones, SSE, cancelación,
-relanzamiento) y ejecución distribuida real en 2 pods contra un SUT de demo. **Existe
-además una UI web** (single-page en
-`orchestrator/src/main/resources/META-INF/resources/index.html`) que cubre scripts —
-incluido **editor in-app con versionado** —, presets, ejecuciones e historial, con
-progreso SSE en vivo (barra de pods + tiles). El detalle operativo para retomar el
-trabajo vive en [CLAUDE.md](CLAUDE.md).
+**Fases 0–8 completas** y probadas end-to-end en minikube: API completa (scripts,
+versiones, validación, pre-test, presets, ejecuciones, SSE, cancelación, relanzamiento),
+ejecución distribuida real por worker-pool que **suma RPS**, monitoreo sintético
+programado (Schedules cron + veredicto + webhook), y una **UI web** (single-page en
+`orchestrator/src/main/resources/META-INF/resources/index.html`) con editor de scripts
+in-app, presets (CRUD + editar en modal), ejecuciones e historial con progreso SSE en
+vivo, y vista de Estado. Además una primera **rampa por RPS objetivo** (§8.8). El
+detalle operativo para retomar el trabajo vive en [CLAUDE.md](CLAUDE.md).
+
+### Entorno productivo destino (BCP AKS) — condiciona el worker (Fase 9)
+
+El destino real es el **AKS de BCP**. Restricción de seguridad: **no se pueden desplegar
+Dockerfiles/contenedores arbitrarios** (con `apt`/`curl`); solo microservicios de la
+plataforma aprobada, con dependencias desde el **Artifactory interno**. Su plataforma es
+**Spring Boot sobre el parent `com.bcp.atlas` (Atlas), no Quarkus**, y **ya tienen un
+utilitario que ejecuta JMeter embebido** (`support-ciam-jmeter-utility`). Implicaciones:
+
+- El worker debe rehacerse como **microservicio (Spring Boot/Atlas) con JMeter embebido
+  vía dependencias Maven** (no la imagen actual que baja JMeter+plugins con `curl`). El
+  bucle del agente pull se porta a Java; el contrato REST `/internal/*` no cambia. Ver
+  **Fase 9**. El orquestador sigue en Quarkus (worker y orquestador solo comparten REST).
+- **Plugins JMeter disponibles en su Artifactory**: los artefactos `org.apache.jmeter:*`
+  (core/http/functions/components/java/jorphan 5.6.3) y `kg.apc:jmeter-plugins-casutg`
+  (+ `cmn-jmeter`). **NO tienen `kg.apc:jmeter-plugins-tst`** (Throughput Shaping Timer).
+- Por eso la rampa por RPS **no debe usar el Throughput Shaping Timer**: `casutg` ya
+  incluye el **Free-Form Arrivals Thread Group** (rampa multi-fila por tasa de llegadas
+  ≈ RPS, con gráfico) y el **Ultimate Thread Group** (rampa multi-fila por hilos). La
+  plantilla actual (`rps-ramp.jmx`) usa el TST y debe migrarse a Free-Form Arrivals.
 
 ### Pivote de arquitectura (decidido 2026-07-19; define las Fases 7 y 8)
 
@@ -267,6 +287,25 @@ El preset guarda tipo + parámetros; el motor los traduce a propiedades `-J` por
 - Los chequeos usan el mismo motor de ejecución (1 shard) y los mismos guardrails que
   las pruebas de carga; solo cambian los parámetros.
 
+### 8.8 Rampa por RPS objetivo (pre-warm escalonado hasta un pico)
+
+Forma de carga que apunta a un **RPS objetivo** (no a un nº de hilos): sube de `startRps`
+a `peakRps` durante `rampSeconds` y mantiene el pico `holdSeconds`. Como el RPS es
+aditivo entre shards, el orquestador reparte el pico entre workers (peak/N cada uno; la
+suma da el pico), NO reparte hilos (son solo techo) y fija `duration=ramp+hold`.
+
+- **Estado**: primera versión implementada con el **Throughput Shaping Timer** (plugin
+  `jpgc-tst`) y verificada en minikube (rampa `nodes=2` 20→200 RPS: el RPS agregado por
+  segundo sube escalonado al pico y la suma de shards = muestras del merged).
+- **Pendiente (por el Artifactory de BCP, ver §0)**: migrar la plantilla del Throughput
+  Shaping Timer al **Free-Form Arrivals Thread Group** (`casutg`, que sí tienen), que
+  además da rampa **multi-fila** (N filas arbitrarias) como la tabla clásica de JMeter.
+- **Fast-follow de usabilidad**: rampa multi-fila editable (varias filas start/end/dur),
+  **guardarla como preset** (la rampa es un parámetro estructurado → persiste ya con el
+  preset) y **editor gráfico interactivo** (arrastrar puntos en un SVG y que se
+  actualicen los números). La multi-fila real encaja mejor construyendo el plan en el
+  worker Java embebido (Fase 9) que con una plantilla `-J` de nº de filas fijo.
+
 ## 9. Requisitos priorizados
 
 **P0 — sin esto no sirve** *(hecho sobre el motor de Jobs; se re-valida sobre worker-pool en Fase 7)*
@@ -275,8 +314,9 @@ El preset guarda tipo + parámetros; el motor los traduce a propiedades `-J` por
 - Historial persistente de ejecuciones.
 
 **P1 — siguiente entrega de valor**
-- Migración al worker-pool por pull (Fase 7): desbloquea el despliegue en la plataforma real de microservicios.
-- Monitoreo sintético programado con reporte de estado y webhook (Fase 8).
+- ~~Migración al worker-pool por pull (Fase 7)~~ ✅ y ~~monitoreo sintético (Fase 8)~~ ✅ — hechos.
+- **Worker como microservicio con JMeter embebido (Fase 9)**: desbloquea el despliegue en el AKS de BCP.
+- Rampa por RPS multi-fila (Free-Form Arrivals) + guardarla como preset + editor gráfico (§8.8).
 
 **P2 — futuro, pero condiciona el diseño**
 - Comparación contra baseline, editor por formularios, integración con pipelines CI/CD.
@@ -420,6 +460,36 @@ webhook en esa misma corrida. ✅ **Verificado end-to-end en minikube**: un sche
 DEGRADED, flaky con 9.83% error>0=FAILED), veredicto global FAILED, `/api/status` y la
 pestaña Estado lo reflejan, y el webhook se disparó.
 
+### Fase 9 — Worker como microservicio con JMeter embebido (BCP AKS) — PENDIENTE, P1
+Requisito para desplegar en el AKS de BCP, donde no se permiten Dockerfiles/contenedores
+arbitrarios (ver §0). El worker actual (imagen que baja JMeter+plugins con `curl` +
+`agent.sh` en bash) se sustituye por un microservicio con JMeter embebido.
+- [ ] Módulo `jmeter-worker` como **microservicio Spring Boot/Atlas** (parent
+      `com.bcp.atlas`, el patrón del utilitario `support-ciam-jmeter-utility` que ya
+      ejecuta JMeter embebido y está aprobado por seguridad). JDK según Atlas.
+- [ ] JMeter **embebido** vía dependencias Maven del Artifactory (`ApacheJMeter_core/
+      http/functions/components/java`, `jorphan`, `kg.apc:jmeter-plugins-casutg` +
+      `cmn-jmeter`). Sin CLI de `jmeter`, sin `curl`/`apt`.
+- [ ] Portar el bucle del agente a Java: claim → descarga `.jmx` por HTTP → espera del
+      start-gate → **ejecutar JMeter embebido** (`StandardJMeterEngine`) → heartbeat
+      (aborta si cancelada) → subir `jtl.gz` + log → volver al bucle. El contrato REST
+      `/internal/*` NO cambia (el orquestador no se entera del framework del worker).
+- [ ] **Rampa por RPS con Free-Form Arrivals Thread Group** (`casutg`), NO Throughput
+      Shaping Timer (no está en su Artifactory). Al construir el plan en Java, soportar
+      **N filas arbitrarias** (rampa multi-fila estilo tabla clásica de JMeter, §8.8) es
+      un bucle; el orquestador reparte el pico de RPS entre shards como ya hace.
+- [ ] Validar en minikube que este worker suma RPS igual que el actual, y retirar la
+      imagen basada en `curl`/`agent.sh` + la plantilla `rps-ramp.jmx` del TST.
+
+**Nota:** en local (sin acceso al Artifactory ni al parent `com.bcp.atlas`) se construye
+una versión **standalone equivalente** (mismos artefactos JMeter de Maven Central) que
+BCP adapta al parent Atlas cambiando `<parent>`/starter; la lógica de JMeter embebido y
+del agente pull es idéntica. El orquestador permanece en Quarkus.
+
+**Criterio:** el worker es un microservicio desplegable en el pipeline de BCP (sin
+Dockerfile arbitrario), ejecuta JMeter embebido con las dependencias del Artifactory, y
+suma RPS entre shards igual que el worker actual.
+
 ### Deuda de calidad transversal (añadida 2026-07-19)
 Hoy solo existe un test unitario (`ExecParamsTest`). Por orden de retorno:
 - [ ] Tests de integración `@QuarkusTest` + Testcontainers (SQL Server) para el ciclo scripts → presets → executions contra la API real
@@ -457,6 +527,8 @@ Hoy solo existe un test unitario (`ExecParamsTest`). Por orden de retorno:
 - ~~Motor de ejecución~~ → **Resuelto (2026-07-19): worker-pool por pull (Fase 7); el motor de K8s Jobs se retira al validarlo en minikube.**
 - ~~UI v1~~ → **Resuelto: single-page vanilla servida por el orquestador** (implementada, con editor in-app). Monaco/SPA solo si el editor lo exigiera más adelante.
 - ~~Modelado del monitoreo~~ → **Resuelto (2026-07-19): un preset ligero por servicio, agrupados en Schedules; alertas por webhook HTTP + historial en UI** (email descartado por ahora).
+- ~~Framework/empaquetado del worker~~ → **Resuelto (2026-07-19): microservicio Spring Boot/Atlas con JMeter embebido** (Fase 9), por la restricción de BCP AKS (no Dockerfiles arbitrarios) y su utilitario existente que ya embebe JMeter. El orquestador sigue en Quarkus.
+- ~~Plugin para la rampa por RPS~~ → **Resuelto (2026-07-19): Free-Form Arrivals Thread Group (`casutg`), no Throughput Shaping Timer** (`jpgc-tst` no está en el Artifactory de BCP). Da además rampa multi-fila (§8.8).
 - Sizing de referencia del worker (hilos máximos por réplica según CPU/RAM). → Sigue abierta; medir con cargas mayores.
 - Intervalo de polling del claim y timeout de heartbeat (valores por defecto). → Definir en Fase 7 midiendo en minikube.
 - Aviso del validador cuando un `.jmx` traiga Backend Listener (para que no llegue a prod). → Añadir en Fase 7.
@@ -473,9 +545,10 @@ jmeter-orchestrator/
 │   ├── src/main/java/.../results/   # Fusión de JTL, reporte, resumen
 │   ├── src/main/java/.../storage/   # Almacén local de artefactos del orquestador
 │   └── src/main/resources/db/migration/   # Flyway
-├── worker/                      # Dockerfile JMeter + agente pull (agent.sh)
+├── worker/                      # Worker actual: Dockerfile JMeter + agente pull (agent.sh)
+│                                #   → Fase 9: se sustituye por microservicio Spring Boot/Atlas embebido
 ├── deploy/pool/                 # Topología worker-pool (orquestador + workers)
 ├── deploy/                      # monitoring/ y target-api/ = SOLO demo local
-├── scripts-plantilla/           # .jmx base parametrizado con __P()
+├── scripts-plantilla/           # base.jmx + rps-ramp.jmx (rampa por RPS, §8.8) parametrizados con __P()
 └── docs/                        # Este plan, convenciones, runbooks
 ```
