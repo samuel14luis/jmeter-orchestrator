@@ -13,7 +13,7 @@ ENV PATH=${JMETER_HOME}/bin:${PATH}
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends curl unzip bash ca-certificates; \
+    apt-get install -y --no-install-recommends curl unzip bash ca-certificates jq gzip coreutils; \
     rm -rf /var/lib/apt/lists/*
 
 # JMeter core
@@ -37,7 +37,11 @@ RUN set -eux; \
 # Ajuste de memoria por defecto (se recomienda mas pods con menos hilos, seccion 12)
 ENV JVM_ARGS="-Xms512m -Xmx1536m"
 
+# Dispatcher (run.sh) + agente pull (agent.sh, Fase 7) + entrypoint legado de Jobs.
+# El dispatcher usa el agente si ORCHESTRATOR_URL esta definido; si no, el modo Jobs.
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY agent.sh /agent.sh
+COPY run.sh /run.sh
+RUN chmod +x /entrypoint.sh /agent.sh /run.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/run.sh"]
