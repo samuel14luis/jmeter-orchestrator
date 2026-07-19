@@ -387,15 +387,17 @@ fast-follow de usabilidad. (El deep-link a Grafana se descartó: sin Grafana en 
       Jobs simplemente no existe en este set.
 - [ ] Retirar `KubernetesJobService`/Fabric8 y el `entrypoint.sh` basado en
       `JOB_COMPLETION_INDEX` (+ manifiestos legado `deploy/0X-*`) cuando el pool esté validado
-- [ ] **Validación en minikube (el objetivo declarado del entorno local)**: correr con
-      1 shard y con 2+ shards contra `target-api` y verificar, con el resumen agregado
-      del orquestador (no con Grafana), que los RPS por shard suman el total esperado
+- [x] **Validación en minikube con carga JMeter real (2026-07-19)**: desplegado el pool
+      (orchestrator 1 réplica + 2 workers, ns `jmeter-load`, DB en el host) y lanzada una
+      prueba `nodes=2` contra `target-api`. Resultado **COMPLETED, 0 errores, tps agregado
+      ~4109**; suma de RPS **exacta**: node-0 41098 + node-1 41074 = 82172 = muestras del
+      resumen agregado. El orquestador corrió bajo la SA por defecto (sin RBAC de Jobs ni
+      API de K8s en runtime) y sin Grafana/InfluxDB.
 
 **Criterio:** una prueba de N shards corre completa sobre el worker-pool sin tocar el
-API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resumen.
-El **backend del protocolo y el agente worker están hechos y verificados** (con JMeter
-stubbeado); falta construir la imagen real, los manifiestos de despliegue, retirar
-Fabric8 y la validación con carga JMeter real en minikube.
+API de Kubernetes en runtime, y la suma de RPS por shard ≈ RPS total del resumen. ✅
+**Cumplido y verificado end-to-end en minikube con JMeter real.** Solo queda retirar el
+motor legado de Jobs/Fabric8 (siguiente paso).
 
 ### Fase 8 — Monitoreo sintético programado (≈1–2 semanas, tras Fase 7) — PENDIENTE, P1
 - [ ] Entidades `Schedule` y `ScheduleRun` + migración Flyway
