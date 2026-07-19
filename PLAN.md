@@ -9,9 +9,12 @@
 Las Fases 0–4 están **implementadas y probadas end-to-end** en minikube: API completa
 (scripts, versiones, validación, pre-test, presets, ejecuciones, SSE, cancelación,
 relanzamiento), ejecución distribuida real en 2 pods contra un SUT de demo y métricas
-en vivo en Grafana (InfluxDB + Prometheus). Pendientes principales: UI web, OIDC,
-reporte HTML nativo de JMeter (`jmeter -g`), partición fina de CSV por pod. El detalle
-operativo para retomar el trabajo vive en [CLAUDE.md](CLAUDE.md).
+en vivo en Grafana (InfluxDB + Prometheus). **Existe además una UI web** (single-page en
+`orchestrator/src/main/resources/META-INF/resources/index.html`) que cubre scripts,
+presets, ejecuciones e historial, con progreso SSE en vivo (barra de pods + tiles).
+Pendientes principales: endurecer la UI (editor de scripts in-app, deep-link a Grafana),
+OIDC, reporte HTML nativo de JMeter (`jmeter -g`), partición fina de CSV por pod. El
+detalle operativo para retomar el trabajo vive en [CLAUDE.md](CLAUDE.md).
 
 Desviaciones respecto al borrador original, **ya aplicadas** (el resto del documento
 está actualizado para reflejarlas):
@@ -250,11 +253,20 @@ El preset guarda tipo + parámetros; el motor los traduce a propiedades `-J` por
 
 **Criterio:** relanzar una prueba anterior toma menos de 30 segundos. ✅
 
-### Fase 5 — UI y métricas en vivo (≈2–3 semanas) — métricas HECHAS, UI pendiente
-- [ ] UI web: scripts, editor, presets, ejecuciones, progreso SSE
+### Fase 5 — UI y métricas en vivo (≈2–3 semanas) — mayormente HECHA
+- [x] UI web (single-page, `index.html`): subida/validación/pre-test de scripts, CRUD y
+  lanzamiento de presets, ejecuciones ad-hoc, historial filtrable con detalle,
+  cancelar/relanzar, y **progreso SSE en vivo con barra de pods + tiles** (OK/fallo/activos/total)
 - [x] Backend Listener → InfluxDB + Prometheus + dashboards Grafana en vivo (verificado en minikube)
+- [ ] Editor de scripts in-app: ver/editar el XML y guardar versión nueva sin salir de la UI
+  (el backend ya lo soporta: `GET .../versions/{v}/content` + `POST .../versions`)
+- [ ] Resumen de métricas del **detalle** de ejecución como tiles (hoy JSON crudo) y
+  deep-link a Grafana por ejecución (acotado a su ventana temporal)
+- [ ] Confirmación en acciones destructivas (cancelar ejecución, borrar preset)
 
-**Criterio:** un usuario no experto lanza una prueba guiado por la UI y ve métricas en tiempo real.
+**Criterio:** un usuario no experto lanza una prueba guiado por la UI y ve métricas en
+tiempo real. ✅ para el flujo básico; el editor in-app y los tiles del detalle son el
+fast-follow de usabilidad.
 
 ### Fase 6 — Endurecimiento (continuo) — PENDIENTE
 - [ ] OIDC + roles (sustituye `X-User`), lista blanca de targets por entorno, quotas
