@@ -32,6 +32,13 @@ public class ExecutionReconciler {
     @Inject
     ExecutionEvents events;
 
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name = "orchestrator.engine", defaultValue = "jobs")
+    String engine;
+
+    private boolean poolEngine() {
+        return "pool".equalsIgnoreCase(engine);
+    }
+
     @Scheduled(every = "5s", concurrentExecution = ConcurrentExecution.SKIP, delayed = "10s")
     void reconcile() {
         List<Execution> active;
@@ -55,7 +62,12 @@ public class ExecutionReconciler {
             executions.aggregateAndClose(exec.id);
             return;
         }
-        // status == RUNNING
+        // status == RUNNING. En modo pool, el ciclo de vida de una ejecucion RUNNING
+        // lo gobiernan los heartbeats/resultados de los workers y el reaper del
+        // WorkerPoolService, no el API de Kubernetes: no hay Job que consultar.
+        if (poolEngine()) {
+            return;
+        }
         Job job = k8s.getJob(exec.id);
         if (job == null) {
             // El Job pudo ser borrado por TTL tras finalizar: intentamos cerrar por artefactos.

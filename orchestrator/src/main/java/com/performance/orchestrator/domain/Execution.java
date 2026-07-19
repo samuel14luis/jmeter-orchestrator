@@ -43,6 +43,14 @@ public class Execution extends PanacheEntityBase {
     @Column(name = "started_at")
     public Instant startedAt;
 
+    /**
+     * Start-gate del motor worker-pool (Fase 7): instante comun a partir del cual
+     * todos los shards arrancan. Se fija cuando el ultimo shard queda reclamado.
+     * Null en el motor de K8s Jobs.
+     */
+    @Column(name = "start_at")
+    public Instant startAt;
+
     @Column(name = "finished_at")
     public Instant finishedAt;
 

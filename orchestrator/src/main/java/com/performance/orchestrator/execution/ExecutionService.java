@@ -19,6 +19,8 @@ import com.performance.orchestrator.k8s.LaunchSpec;
 import com.performance.orchestrator.results.JtlAggregator;
 import com.performance.orchestrator.results.MetricsSummary;
 
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+
 import io.quarkus.logging.Log;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.panache.common.Sort;
@@ -48,6 +50,18 @@ public class ExecutionService {
 
     @Inject
     ExecutionEvents events;
+
+    /**
+     * Motor de ejecucion: "jobs" (K8s Jobs via Fabric8, legado) o "pool"
+     * (worker-pool por pull, Fase 7). En modo pool el orquestador no crea Jobs:
+     * deja la ejecucion PENDING y los workers reclaman sus shards.
+     */
+    @ConfigProperty(name = "orchestrator.engine", defaultValue = "jobs")
+    String engine;
+
+    private boolean poolEngine() {
+        return "pool".equalsIgnoreCase(engine);
+    }
 
     // ---------------------------------------------------------------------
     //  Consulta (invocada desde REST: hay session de request)
@@ -163,8 +177,20 @@ public class ExecutionService {
         });
     }
 
-    /** Crea el Job en Kubernetes y marca la ejecucion como RUNNING (o FAILED). */
+    /**
+     * Arranca la ejecucion segun el motor configurado. En modo pool no se crea
+     * ningun Job: la ejecucion queda PENDING con sus shards a la espera de que las
+     * replicas worker los reclamen (el start-gate la pasa a RUNNING). En modo jobs
+     * se crea el Job Indexed en Kubernetes.
+     */
     private void startExecution(Long executionId) {
+        if (poolEngine()) {
+            int nodes = QuarkusTransaction.requiringNew().call(() -> get(executionId).nodes);
+            events.publish(executionId, new ExecutionEvent(executionId, "PENDING",
+                    "Esperando a que " + nodes + " worker(s) reclamen sus shards", null));
+            Log.infof("Ejecucion %d en cola para el worker-pool (%d shards)", executionId, nodes);
+            return;
+        }
         LaunchSpec spec = QuarkusTransaction.requiringNew().call(() -> {
             Execution exec = get(executionId);
             ScriptVersion version = ScriptVersion.findById(exec.scriptVersionId);
@@ -211,12 +237,22 @@ public class ExecutionService {
             }
             e.status = ExecutionStatus.CANCELLED;
             e.finishedAt = Instant.now();
+            if (poolEngine()) {
+                // Los shards no entregados quedan CANCELLED; sus workers lo detectan
+                // en el siguiente heartbeat y abortan jmeter -n.
+                ExecutionNode.update("status = ?1, updatedAt = ?2 "
+                                + "where executionId = ?3 and status in ?4",
+                        NodeStatus.CANCELLED, Instant.now(), executionId,
+                        List.of(NodeStatus.PENDING, NodeStatus.CLAIMED, NodeStatus.RUNNING));
+            }
             AuditEvent.record(user, "CANCEL", "Execution", executionId, null);
         });
-        try {
-            k8s.deleteExecutionJob(executionId);
-        } catch (Exception e) {
-            Log.warnf(e, "No se pudo borrar el Job al cancelar la ejecucion %d", executionId);
+        if (!poolEngine()) {
+            try {
+                k8s.deleteExecutionJob(executionId);
+            } catch (Exception e) {
+                Log.warnf(e, "No se pudo borrar el Job al cancelar la ejecucion %d", executionId);
+            }
         }
         events.publish(executionId, new ExecutionEvent(executionId, "CANCELLED", "Cancelada por " + user, null));
         events.complete(executionId);

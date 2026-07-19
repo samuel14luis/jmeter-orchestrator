@@ -43,6 +43,20 @@ public class ExecutionNode extends PanacheEntityBase {
     @Column(name = "log_path")
     public String logPath;
 
+    // ---- Motor worker-pool (Fase 7) ----
+
+    /** Replica worker que reclamo este shard (null mientras esta PENDING). */
+    @Column(name = "worker_id", length = 200)
+    public String workerId;
+
+    /** Ultimo latido recibido del worker; el reaper marca huerfano si envejece. */
+    @Column(name = "heartbeat_at")
+    public Instant heartbeatAt;
+
+    /** Instante en que el shard empezo a ejecutar jmeter -n. */
+    @Column(name = "started_at")
+    public Instant startedAt;
+
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt = Instant.now();
 
@@ -52,5 +66,15 @@ public class ExecutionNode extends PanacheEntityBase {
 
     public static ExecutionNode findByExecutionAndIndex(Long executionId, int index) {
         return find("executionId = ?1 and nodeIndex = ?2", executionId, index).firstResult();
+    }
+
+    public static long countByExecutionAndStatus(Long executionId, NodeStatus status) {
+        return count("executionId = ?1 and status = ?2", executionId, status);
+    }
+
+    /** Numero de shards que aun no han terminado (no estan en estado terminal). */
+    public static long countNonTerminal(Long executionId) {
+        return count("executionId = ?1 and status in ?2", executionId,
+                List.of(NodeStatus.PENDING, NodeStatus.CLAIMED, NodeStatus.RUNNING));
     }
 }
